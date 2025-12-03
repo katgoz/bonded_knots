@@ -1,2 +1,0 @@
-pretzle: 1
-koło: 2=3
