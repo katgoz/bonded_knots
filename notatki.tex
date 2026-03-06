@@ -22,4 +22,38 @@ Yamada polinomial: 18 groups:
     1_1_1_0_2_-1_1_1_1_3_2_3_2_0_2_-1
 \end{verbatim}
 
+\section {Proof that any two outerplanar drawings of a maximal outerplanar graph are topologically isomorphic (up to a reflection)} 
+That can be proved and if two drawings are the same then we found the same graph but the problem with this idea is that a graph can have mulitple maximal outerplanar embeddings:(( But maybe it still makes sense to do this since I always got the same drawing while exploring this idea.
+
+\section{Transforming diagram to outerplanar graph}
+\begin{enumerate}
+\item Define outer face using knotpy function: find outerplanar vertices and crossings
+\item Find vertices that are not outerplanar and calculate how far away are they from the closest outerplanar node
+\item Take the node closest to the outer face and drag it to the outside next to that closest outerplanar node. 
+
+Vertex:
+If its a vertice than there are to options: to drag it out on the left or right side of the vertice. To decide which side is better lets first take a look at the next step(4).
+
+Do we drag it over or under?
+We have to look at the first node on each incident edge of our vertex(3 nodes). We can have three options: under-crossing or over-crossing or another vertex. We always choose to drag under unless the majority of incident edges starts with an over-crossing. In that case we drag over. This is arbitrary - I decided to drag under when there is the same number of over and under-crossings(1 or 0 of each).
+
+Effect: this dragging move introduces 3 new crossings and, unless all 3 of the node neighbors where vertices, we have at least one pure type strand(over-over or under-under (at least 2 crossings of the same type). We can therefore perform the strand flip move.
+
+Crossing:
+We always drag the vertex straight through the crossing. We drag under if the arc connecting vertex with the crossing passed through it under and over in the opposite situation.
+This creates 2 new crossings. This case doesn't have create a pure path (and opportunity for a strand flip move).
+\item After each drag move we perform a strand flip(if its possible). If we dragged the vertex on the right side of the vertex then we flip the strand in the right and if we dragged it on the left then we flip strand on the left side. There is no difference in pd-code but there is a difference in the outer face nodes. That's why we check on which side do we maintain more outer vertices after flipping the strand and that's the side we choose. That's the side to choose in step 3.
+
+\item It can also be possible to flip a strand that does not end in the vertex we dragged out(as was the case in step 3). It's important to check wheter a flip will cause us to lose the outerplanarity in our newly dragged vertex. We can't allow that - always flip on the other side even if we lose more outerplanar vertices.
+
+\item That's all. Now repeat until there are no vertices inside the diagram and no reductions are possible.
+Warning: I didn't think yet of more unique situation, for example if we have a 'circle' in our diagram - sometimes it can be 'flipped around' and change the type of crossing.
+\end{enumerate}
+
+Summary:
+2 functions needed: dragging out a vertex and flip strand(<- we have this;)).
+Also: checking outerplanar nodes and setting them as outerplanar (knotpy?); checking if 2 pd-codes are the same if it is the same graph but different numeration.
+
+
+
 \end{document}
