@@ -5,6 +5,7 @@ import heapq
 from collections import defaultdict, deque
 import knotpy as kp
 from itertools import combinations
+from knotpy.classes.endpoint import Endpoint
 
 def find_path_of_type(diagram, start, end, allowed_type):
     """Finds the path between two endpoints in a PlanarDiagram using only transitions of allowed types(over/under) inside crossings.
@@ -61,9 +62,11 @@ def find_path_of_type(diagram, start, end, allowed_type):
         current = next_ep
 
 
-def min_crossings_path(diagram, start, end, blocked_transitions):
-    """Computes the minimal-cost path between two endpoints in a planar diagram, where cost represents the number of crossings that would be created
-    by inserting an edge alongside this path.
+def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_transitions):
+    """Computes the minimal-cost path between a set of start endpoints and a set of target endpoints in a planar diagram, where cost represents
+    the number of crossings that would be created by inserting an edge alongside this path.
+
+    The search is initialized with all start_endpoints and terminates when any endpoint from target_endpoints is reached.
 
     We construct an implicit graph where each node is a pair (endpoint, last_turn) and transitions correspond to legal moves through vertices or crossings,
     with edge weights 0 or 1; therefore, a 0-1 BFS algorithm is used.
@@ -95,8 +98,12 @@ def min_crossings_path(diagram, start, end, blocked_transitions):
 
     Args:
         diagram: PlanarDiagram
-        start: Starting endpoint (Endpoint).
-        end: Target endpoint (Endpoint).
+        start_endpoints (Iterable[Endpoint]):
+            Endpoints from which the search is initialized.
+
+        target_endpoints (Iterable[Endpoint]):
+            Endpoints at which the search terminates.
+
         blocked_transitions (dict):
             Mapping: crossing_node -> set of forbidden straight transitions.
             Each transition is represented as a tuple (min_pos, max_pos) describing a straight passage inside that crossing which is not allowed.
@@ -113,32 +120,45 @@ def min_crossings_path(diagram, start, end, blocked_transitions):
     >>> diagram = kp.from_pd_notation(pd_text)
     >>> start = diagram.endpoints[('h', 2)]
     >>> end  = diagram.endpoints[('f', 0)]
-    >>> print(min_crossings_path(diagram, start, end, {}))
+    >>> print(min_crossings_path(diagram, [start], [end], {}))
 
 
     (1.0, [(h2, 'L'), (h0, 'L'), (a2, 'L'), (a1, 'L'), (e0, 'L'), (e3, 'L'), (f0, 'L')])
     """
+    if not isinstance(start_endpoints, (list, tuple, set)) or not isinstance(target_endpoints, (list, tuple, set)):
+        raise TypeError("start_endpoints and target_endpoints must be a list/tuple/set of Endpoint objects")
+
+    if len(start_endpoints) == 0 or len(target_endpoints) == 0:
+        raise ValueError("start_endpoints and target_endpoints cannot be empty")
+
+    if not all(isinstance(ep, Endpoint) for ep in start_endpoints) or not all(isinstance(ep, Endpoint) for ep in target_endpoints):
+        raise TypeError("All elements of start_endpoints and target_endpoints must be Endpoint objects")
+
     twin = diagram.twin
     vertices = diagram.vertices
     crossings = diagram.crossings
     endpoints = diagram.endpoints
+    target_endpoints = set(target_endpoints)
 
     dq = deque() # dq: (endpoint, last_turn)
-
-    dq.append((start, "A"))
-    dq.append((twin(start), "A"))
-
-    dist = {(start, "A"): 0.0, (twin(start), "A"): 0.0} # dist[(endpoint, last_turn)] = best known cost to reach this state so far
-
     parent = {}
-    parent[(twin(start), "A")] = (start, "A")
+    dist = {} # dist[(endpoint, last_turn)] = best known cost to reach this state so far
+
+    for s in start_endpoints:
+        dq.append((s, "A"))
+        dq.append((twin(s), "A"))
+
+        dist[(s, "A")] = 0.0
+        dist[(twin(s), "A")] = 0.0
+        parent[(twin(s), "A")] = (s, "A")
+
     end_state = None
 
     while dq:
         endpoint, last_turn = dq.popleft()
         cost = dist[(endpoint, last_turn)]
 
-        if endpoint == end or twin(endpoint) == end:
+        if endpoint in target_endpoints or twin(endpoint) in target_endpoints:
             end_state = (endpoint, last_turn)
             break
 
@@ -238,7 +258,7 @@ def min_crossings_path(diagram, start, end, blocked_transitions):
     ep, turn = end_state
     last_turn = "A"
     
-    if twin(ep) == end:
+    if twin(ep) in target_endpoints:
         path_states.append((twin(ep), turn))
         cur = parent[end_state]
 
@@ -337,7 +357,6 @@ def find_blocked_transitions(diagram, max_path):
     return blocked_transitions
 
 def min_between_nodes(diagram, max_path):
-    #!!!! can be optimized?: give min_crossings_path all possible endings for one start at once 
     """Computes the minimal-cost path between two nodes in a planar diagram, where the cost represents the number of crossings that would be created
     by inserting a new strand alongside this path. The function is intended to find an alternative placement for max_path, which is a strand 
     between these nodes. As such the search is subject to constraints imposed by max_path.
@@ -350,7 +369,8 @@ def min_between_nodes(diagram, max_path):
     For vertices (V), all incident sections are considered. In this case, the strand may be freely repositioned within the vertex, so every
     incident section is an admissible start or end point.
 
-    For each admissible pair of endpoints (s, t), function min_crossings_path is executed. Among all valid paths, the one minimizing the cost is selected.
+    The admissible start and end endpoints are collected according to the node types. The function min_crossings_path is then executed once with
+    these sets of start and target endpoints, and the minimal-cost path connecting any admissible pair is selected.
 
     The length of minimal-cost path is returned as a number of endpoints needed to insert it:
         The endpoint count is computed as: 2 * (number_of_crossings_along_path + 1) which corresponds to twice the number of arcs in the path.
@@ -384,31 +404,38 @@ def min_between_nodes(diagram, max_path):
     node1 = start_ep.node
     node2 = end_ep.node
 
-    pairs = []
+    start_endpoints = [start_ep]
+    target_endpoints = [end_ep]
 
-    if node1 in diagram.crossings and node2 in diagram.crossings:
-        pairs = [(start_ep, end_ep)]
+    if node1 in diagram.crossings and node2 in diagram.vertices:
+        target_endpoints = list(diagram.endpoints[node2])
 
-    elif node1 in diagram.crossings and node2 in diagram.vertices:
-        pairs = [(start_ep, t) for t in diagram.endpoints[node2]]
+        for t in target_endpoints:
+            if diagram.twin(start_ep) == t:
+                return (2.0, [(start_ep, 'A'), (t, 'A')])
 
     elif node1 in diagram.vertices and node2 in diagram.crossings:
-        pairs = [(s, end_ep) for s in diagram.endpoints[node1]]
+        start_endpoints = list(diagram.endpoints[node1])
 
-    else:
-        pairs = [(s, t) for s in diagram.endpoints[node1] for t in diagram.endpoints[node2]]
+        for s in start_endpoints:
+            if diagram.twin(s) == end_ep:
+                return (2.0, [(s, 'A'), (end_ep, 'A')])
 
-    for s, t in pairs:
-        if diagram.twin(s) == t:
-            return (2.0, [(s, 'A'), (t, 'A')])
+    elif node1 in diagram.vertices and node2 in diagram.vertices :
+        for s in diagram.endpoints[node1]:
+            if diagram.twin(s).node == node2:
+                return (2.0, [(s, 'A'), (diagram.twin(s), 'A')])
 
-        d, path = min_crossings_path(diagram, s, t, blocked_transitions)
+        start_endpoints = list(diagram.endpoints[node1])
+        target_endpoints = list(diagram.endpoints[node2])
 
-        if d is not None:
-            length = (d + 1)*2
-            if best is None or length < best:
-                best = length
-                best_path = path
+    d, path = min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_transitions)
+
+    if d is not None:
+        length = (d + 1)*2
+        if best is None or length < best:
+            best = length
+            best_path = path
 
     if best is None:
         return None, None
@@ -530,6 +557,6 @@ def main(filename):
     return len(results)
 
 
-from pathlib import Path
-file = "Re_Konsultacje/tri10_knots_reduced_inc3.txt"
-main(file)
+if __name__ == "__main__":
+    file = "Re_Konsultacje/tri10_knots_reduced_inc3.txt"
+    main(file)
