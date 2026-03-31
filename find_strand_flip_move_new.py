@@ -1,5 +1,5 @@
 #!!! description? two times slower(but cleaner) from find_strand_flip_move_old
-
+import random
 import re
 import heapq
 from collections import defaultdict, deque
@@ -7,7 +7,7 @@ import knotpy as kp
 from itertools import combinations
 from knotpy.classes.endpoint import Endpoint
 
-def find_path_of_type(diagram, start, end, allowed_type):
+def find_path_of_type(diagram, start, end=None, allowed_type={"over"}):#!!!! zmeinione na end=None
     """Finds the path between two endpoints in a PlanarDiagram using only transitions of allowed types(over/under) inside crossings.
 
     Args:
@@ -39,30 +39,31 @@ def find_path_of_type(diagram, start, end, allowed_type):
     while True:
         if current in visited:
             return None
+
         visited.add(current)
         path.append(current)
         current = diagram.twin(current)
         path.append(current)
 
-        if current == end:
+        if end is not None and current == end:
             return path
 
         node, pos = current.node, current.position
 
         if node not in diagram.crossings:
-            return None
+            return path if end is None else None
 
         if "over" in allowed_type and pos in (1, 3):
             next_ep = diagram.endpoints[(node, 4 - pos)]
         elif "under" in allowed_type and pos in (0, 2):
             next_ep = diagram.endpoints[(node, 2 - pos)]
         else:
-            return None
+            return path if end is None else None
 
         current = next_ep
 
 
-def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_transitions):
+def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_transitions, randomize = False):
     """Computes the minimal-cost path between a set of start endpoints and a set of target endpoints in a planar diagram, where cost represents
     the number of crossings that would be created by inserting an edge alongside this path.
 
@@ -140,6 +141,10 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
     endpoints = diagram.endpoints
     target_endpoints = set(target_endpoints)
 
+    if randomize == True:
+        best_cost = float("inf")
+        end_states = []
+
     dq = deque() # dq: (endpoint, last_turn)
     parent = {}
     dist = {} # dist[(endpoint, last_turn)] = best known cost to reach this state so far
@@ -158,9 +163,21 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
         endpoint, last_turn = dq.popleft()
         cost = dist[(endpoint, last_turn)]
 
-        if endpoint in target_endpoints or twin(endpoint) in target_endpoints:
-            end_state = (endpoint, last_turn)
+        if randomize and cost > best_cost:
             break
+
+        if randomize == False:
+            if endpoint in target_endpoints or twin(endpoint) in target_endpoints:
+                end_state = (endpoint, last_turn)
+                break
+        else:
+            if endpoint in target_endpoints or twin(endpoint) in target_endpoints:
+                if cost < best_cost:
+                    best_cost = cost
+                    end_states = [(endpoint, last_turn)]
+                elif cost == best_cost:
+                    end_states.append((endpoint, last_turn))
+                continue
 
         node = endpoint.node
         pos = endpoint.position
@@ -199,6 +216,7 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
                     else:
                         dq.append(state)
 
+                
         # ==================================================
         # TRANSITIONS THROUGH X
         # ==================================================
@@ -248,9 +266,16 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
                         dq.append(state)
 
 
-    if end_state is None:
-        return None, None
+    if randomize == False:
+        if end_state is None:
+            return None, None
 
+    else:
+        if not end_states:
+            return None, None
+
+
+        end_state = random.choice(end_states)
     # ==========================
     # PATH RECONSTRUCTION
     # ==========================
@@ -279,10 +304,11 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
 
 
     ep, turn = cur
-    if turn == "A":
-        path_states.append((ep, last_turn))
-    else:
-        path_states.append(cur)
+    if not path_states or path_states[-1][0] != ep:
+        if turn == "A":
+            path_states.append((ep, last_turn))
+        else:
+            path_states.append(cur)
 
 
     path_states.reverse()
@@ -356,7 +382,7 @@ def find_blocked_transitions(diagram, max_path):
 
     return blocked_transitions
 
-def min_between_nodes(diagram, max_path):
+def min_between_nodes(diagram, max_path, randomize = False):
     """Computes the minimal-cost path between two nodes in a planar diagram, where the cost represents the number of crossings that would be created
     by inserting a new strand alongside this path. The function is intended to find an alternative placement for max_path, which is a strand 
     between these nodes. As such the search is subject to constraints imposed by max_path.
@@ -429,7 +455,7 @@ def min_between_nodes(diagram, max_path):
         start_endpoints = list(diagram.endpoints[node1])
         target_endpoints = list(diagram.endpoints[node2])
 
-    d, path = min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_transitions)
+    d, path = min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_transitions, randomize = randomize)
 
     if d is not None:
         length = (d + 1)*2
@@ -443,7 +469,7 @@ def min_between_nodes(diagram, max_path):
     return best, best_path
 
 
-def find_strand_flip_move(diagram, allowed_type):
+def find_strand_flip_move(diagram, allowed_type, randomize = False):
     """Searches for a strand flip move and returns found strand together with its alternative placement.
     A strand flip move consists of:
     1) Finding a strand whose crossings are exclusively of the allowed type (either 'over' or 'under')
@@ -493,7 +519,7 @@ def find_strand_flip_move(diagram, allowed_type):
         if max_len is None:
             continue
 
-        min_any, alternative_path = min_between_nodes(diagram, max_path)
+        min_any, alternative_path = min_between_nodes(diagram, max_path, randomize = randomize)
 
 
         if min_any is not None and min_any<max_len:
@@ -554,9 +580,342 @@ def main(filename):
     print("Number:", len(results))
 
 
-    return len(results)
+def insert_crossing(diagram, last_ep, turn, from_ep=None, to_ep=None, kind="under"):
+    pos = 1 if kind == "under" else 0
+
+    x = kp.subdivide_endpoint_by_crossing(diagram, last_ep, pos)
+
+    p1 = (pos + 1) % 4
+    p2 = (pos - 1) % 4
+
+    if turn == "R":
+        first, second = p1, p2
+    else:
+        first, second = p2, p1
+
+    free_endpoints = []
+
+    if from_ep is not None:
+        diagram.set_endpoint((x, first), (from_ep[0], from_ep[1]))
+    else:
+        free_endpoints.append((x, first))
+
+    if to_ep is not None:
+        diagram.set_endpoint((x, second), (to_ep[0], to_ep[1]))
+    else:
+        free_endpoints.append((x, second))
+
+    return free_endpoints
+
+def insert_path_core(diagram, path, kind , max_path = None, outer = False):
+    def need_crossing(prev_ep, prev_turn, ep, turn):
+        if turn != prev_turn: #nie wstawiamy tam gdzie zniknie
+             if max_path is None or (max_path and prev_ep not in max_path[1:-1]):
+                return prev_ep
+        elif prev_ep.node == ep.node and ep.node in diagram.crossings and (prev_ep.position + 2) % 4 == ep.position:
+            offset = 1 if turn == "R" else -1
+            if max_path and diagram.endpoints[(prev_ep.node, (prev_ep.position + offset)%4)] not in max_path[1:-1]:
+                return diagram.endpoints[(prev_ep.node, (prev_ep.position + offset)%4)]
+        return None
+
+    start_ep = None
+    free_ep = None
+
+    prev_ep, prev_turn = path[0]
+
+    if outer == True:
+        new_outer=[]
+        out = False
+        if prev_ep.attr.get("outer") or diagram.twin(prev_ep).attr.get("outer"): #najpierw trzeba sie skapnac czy zaczynamy w srodku czy na zewnatrz
+            ep, turn = path[1]
+            if ep.attr.get("outer") or diagram.twin(ep).attr.get("outer"):
+                node_obj = diagram.nodes[prev_ep.node]
+                dg = node_obj.degree()
+                if (
+                    (ep.node == prev_ep.node) or 
+                    (ep.node != prev_ep.node and (
+                        (prev_turn == "R" and (
+                            diagram.endpoints[(prev_ep.node, (prev_ep.position-1)%dg)].attr.get("outer") == True or
+                            diagram.twin(diagram.endpoints[(prev_ep.node, (prev_ep.position-1)%dg)]).attr.get("outer") == True
+                        )) or 
+                        (prev_turn == "L" and (
+                            diagram.endpoints[(prev_ep.node, (prev_ep.position+1)%dg)].attr.get("outer") == True or 
+                            diagram.twin(diagram.endpoints[(prev_ep.node, (prev_ep.position+1)%dg)]).attr.get("outer") == True
+                        ))
+                    ))
+                ):
+                    out = True
+                    new_outer.append("S")#dodac start ale go tu nie ma trzeba potem
+
+    for ep, turn in path[1:]:
+        ep_cross = need_crossing(prev_ep, prev_turn, ep, turn)
+        if ep_cross is not None:
+            if outer == True:
+                if ep_cross.attr.get("outer") or diagram.twin(ep_cross).attr.get("outer"): 
+                    if out == True:
+                        out = False
+                    else:
+                        out = True
+                elif out == True: #wchodzimy do nieoznaczonego(po usuneciu outer np.)
+                    out = False
+
+            use_turn = turn
+            if prev_turn != turn:
+                if ep_cross == ep:
+                    use_turn = prev_turn
+
+            free = insert_crossing(diagram, ep_cross, use_turn, free_ep, None, kind)
+
+
+            if not free:
+                raise ValueError("No free endpoints")
+
+            if len(free) == 2 and start_ep is None:
+                start_ep = free[0]
+
+            free_ep = free[-1]
+
+            if outer == True and out == True:
+                new_outer.append(free_ep)
+
+        elif outer == True and prev_ep.node == ep.node and ep.node in diagram.crossings and (prev_ep.position + 2) % 4 == ep.position: #cross ale z tym co znika
+            offset = 1 if turn == "R" else -1
+            ep_cross = diagram.endpoints[(prev_ep.node, (prev_ep.position + offset)%4)]
+
+            if ep_cross.attr.get("outer") or diagram.twin(ep_cross).attr.get("outer"): 
+                if out == False:
+                    out = True
+                    if free_ep:
+                        new_outer.append(free_ep)
+                    else:
+                        new_outer.append("S")
+
+        prev_ep, prev_turn = ep, turn
+
+    if outer == True:
+        return start_ep, free_ep, new_outer
+
+    return start_ep, free_ep
+
+def insert_endpoint(diagram, node, pos, new_ep):
+    """
+    Wstaw endpoint do node na pozycję `pos` i napraw wszystkie twin referencje.
+
+    Args:
+        diagram: Diagram (knotpy)
+        node: node do którego wstawiamy
+        pos: indeks wstawienia
+        new_ep: Endpoint (node, position) lub tuple
+    """
+    if not isinstance(new_ep, Endpoint):
+        new_ep = Endpoint(new_ep[0], new_ep[1])
+    
+    if node in diagram.vertices:
+        endpoints=[]
+        for i, ep in enumerate(diagram.nodes[node]):
+            if ep.node in diagram.nodes:
+                endpoints.append(ep)
+            else:
+                remove = (node, i) #usuwamy jak natrafimy na zły
+
+
+        diagram.remove_endpoint(remove)
+        endpoints.insert(pos, new_ep)
+
+        diagram._nodes[node]._inc = endpoints
+
+        # --- 2. FIX TWINÓW dla przesuniętych endpointów ---
+        for i in range(pos + 1, len(endpoints)):
+            ep = endpoints[i]
+            if ep is None:
+                continue
+
+            twin_ep = diagram.twin(ep)
+
+            if twin_ep is None:
+                continue
+
+
+            if twin_ep.node == node:
+                twin_ep.position = i
+
+    if node in diagram.crossings:
+        twin = diagram.twin((node, pos))
+        if twin is None or twin.node not in diagram.nodes:
+            diagram.set_endpoint((node, pos), new_ep)
+        else:
+            raise ValueError("cannot overwrite legitimate endpoint")
+
+def decide_insert_place_2ep(del_pos, first_pos, second_pos):
+    if first_pos + second_pos == 1: #1->0, 0->1
+        if del_pos == 0:
+            return 2
+        else:
+            return 1
+    if first_pos + second_pos == 3: #1 -> 2, 2-> 1
+        if del_pos == 2:
+            return 2
+        else:
+            return 1
+    else:
+        return 2
+
+def decide_insert_place_1ep(del_pos, first_pos, turn):
+    if del_pos == 1:
+        if first_pos == 1:
+            return 1
+        elif first_pos == 2:
+            pos1 = 1 if turn == "R" else 2
+            return pos1
+        else:
+            pos1 = 2 if turn == "R" else 1
+            return pos1
+
+    else: #del_pos 0,2
+        if del_pos == first_pos:
+            return 2
+        elif first_pos == (del_pos + 1)%3:
+            pos1 = 2 if turn == "R" else 1
+            return pos1
+        else:
+            pos1 = 1 if turn == "R" else 2
+            return pos1
+
+def attach_ends(diagram, path, max_path, start_ep, free_ep, start = False):
+    first_del_ep = max_path[0]
+    first_ep, first_turn = path[0]
+    second_ep = path[1][0]
+
+    node1 = first_ep.node
+    if node1 in diagram.vertices:
+        if node1 == second_ep.node:
+            pos1 = decide_insert_place_2ep(first_del_ep.position, first_ep.position, second_ep.position)
+
+        else:
+            pos1 = decide_insert_place_1ep(first_del_ep.position, first_ep.position, first_turn)
+
+    if node1 in diagram.crossings:
+        pos1 = first_ep.position
+
+    last_del_ep = max_path[-1]
+    last_ep, last_turn = path[-1]
+    second_to_last_ep, second_to_last_turn = path[-2]
+    node2 = last_ep.node
+    if node2 in diagram.vertices:
+        if node2 == second_to_last_ep.node:
+            pos2 = decide_insert_place_2ep(last_del_ep.position, second_to_last_ep.position, last_ep.position)
+
+        else:
+            turn = "L" if last_turn == "R" else "R"
+            pos2 = decide_insert_place_1ep(last_del_ep.position, last_ep.position, turn)
+
+    if node2 in diagram.crossings:
+        pos2 = last_ep.position
+
+    if start_ep == None and free_ep == None:
+        insert_endpoint(diagram, node1, pos1, (node2, pos2))
+        insert_endpoint(diagram, node2, pos2, (node1, pos1))
+
+    else:
+        insert_endpoint(diagram, node1, pos1, (start_ep[0], start_ep[1]))
+        insert_endpoint(diagram, start_ep[0], start_ep[1], (node1, pos1))
+        insert_endpoint(diagram, node2, pos2, (free_ep[0], free_ep[1]))
+        insert_endpoint(diagram, free_ep[0], free_ep[1], (node2, pos2))
+
+    if start == True:
+        return (node1, pos1)
+
+
+def crossing_to_arc(k, crossing, parity) -> None:
+    """
+    From knotpy:
+    Remove a crossing and join two of its arcs into one (remove it and connect the adjacent endpoints).
+    This ignores the non-parity endpoints and connect the parity endpoints.
+
+    Args:
+        k (Diagram): Diagram to modify.
+        crossing (Hashable): Crossing node identifier.
+        parity (int): Use 0 (even) or 1 (odd) side to connect.
+    """
+    if not isinstance(k.nodes[crossing], kp.Crossing):
+        raise TypeError("Variable crossing must be of a crossing")
+
+
+    # connect two arcs of a knot
+    ep_a = k.nodes[crossing][parity]
+    ep_b = k.nodes[crossing][parity + 2]
+    k.set_endpoint(ep_a, ep_b)
+    k.set_endpoint(ep_b, ep_a)
+
+    # remove the crossing
+    k.remove_node(crossing, remove_incident_endpoints=False)
+
+def delete_path(diagram, max_path):
+    to_remove = []
+
+    for i in range(len(max_path) - 1):
+        ep1 = max_path[i]
+        ep2 = max_path[i+1]
+
+        if (ep1.node == ep2.node and ep1.position == (ep2.position + 2) % 4):
+            to_remove.append((ep1.node, (ep1.position + 1) % 2))
+
+    for node, parity in to_remove:
+        if node in diagram.nodes:
+            crossing_to_arc(diagram, node, parity)
+
+    return diagram
+
+
+def perform_strand_flip(diagram, max_path, alternative_path, kind, outer = False):
+    if outer == True:
+        start_ep, free_ep, new_outer = insert_path_core(diagram, alternative_path, kind, max_path, outer = True)
+    else:
+        start_ep, free_ep = insert_path_core(diagram, alternative_path, kind, max_path)
+    delete_path(diagram, max_path)
+    if outer == True and new_outer and new_outer[0] == "S":
+        ep1 = attach_ends(diagram, alternative_path, max_path, start_ep, free_ep, start = True)
+        new_outer[0] = ep1
+    else:
+        attach_ends(diagram, alternative_path, max_path, start_ep, free_ep)        
+    if outer == True:
+        return new_outer
+
+
+def find_and_perform_strand_flip(diagram, outer = False, randomize = False):
+#    knot_diagrams = []
+#    diagram1 = diagram.copy()
+#    diagram1.name = kp.to_pd_notation(diagram1)
+#    knot_diagrams.append(diagram1)
+    for kind in ("over", "under"):
+        result = find_strand_flip_move(diagram, kind, randomize = randomize)
+        max_path, alternative_path = result
+        if max_path and alternative_path:
+            if outer == True:
+                new_outer = perform_strand_flip(diagram, max_path, alternative_path, kind, outer = True)
+                if new_outer:
+                    return True, new_outer
+
+            else:
+                perform_strand_flip(diagram, max_path, alternative_path, kind, outer = False)
+            return True, None
+        #    knot_diagrams.append(diagram)
+
+        #    diagram.name = kp.to_pd_notation(diagram)
+        #    break
+
+
+    #output_path = "C:/Users/gozma/Desktop/uw_pliki/licencjat/flip_strand.pdf"
+    #kp.export_pdf(knot_diagrams, output_path)
+    #print(f"Zapisano do pliku: {output_path}")
+
+
+    return False, None
 
 
 if __name__ == "__main__":
-    file = "Re_Konsultacje/tri10_knots_reduced_inc3.txt"
-    main(file)
+    #file = "Re_Konsultacje/tri10_knots_reduced_inc3.txt"
+    #main(file)
+    pd_text = "V[0,1,2],V[3,4,5],V[6,7,4],V[0,8,9],X[1,10,3,11],X[11,5,7,12],X[9,13,6,10],X[2,12,13,8]"
+    D = kp.from_pd_notation(pd_text)
+    find_and_perform_strand_flip(D)
