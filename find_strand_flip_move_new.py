@@ -159,8 +159,9 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
     dist = {} # dist[(endpoint, last_turn)] = best known cost to reach this state so far
 
     for s in start_endpoints:
-        dq.append((s, "A"))
-        dq.append((twin(s), "A"))
+        if (s, "A") not in dq:
+            dq.append((s, "A"))
+            dq.append((twin(s), "A"))
 
         dist[(s, "A")] = 0.0
         dist[(twin(s), "A")] = 0.0
@@ -270,11 +271,17 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
     # ==========================
     path_states = []
     ep, turn = end_state
-    last_turn = "A"
+    last_turn = turn
+
+    if last_turn == "A":
+        last_turn = "L"
     
     if twin(ep) in target_endpoints:
         path_states.append((twin(ep), turn))
-        cur = parent[end_state]
+        if ep not in start_endpoints:
+            cur = parent[end_state]
+        else:
+            cur = end_state
 
     else:
         cur = end_state
@@ -304,6 +311,273 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
 
     return dist[end_state], path_states
 
+
+def min_crossings_path_all(
+    diagram,
+    start_endpoints,
+    target_endpoints,
+    blocked_transitions
+):
+    if not isinstance(start_endpoints, (list, tuple, set)) or not isinstance(target_endpoints, (list, tuple, set)):
+        raise TypeError("start_endpoints and target_endpoints must be iterable")
+
+    if len(start_endpoints) == 0 or len(target_endpoints) == 0:
+        raise ValueError("start_endpoints and target_endpoints cannot be empty")
+
+    twin = diagram.twin
+    vertices = diagram.vertices
+    crossings = diagram.crossings
+    endpoints = diagram.endpoints
+    target_endpoints = set(target_endpoints)
+
+    # ======================================================
+    # BFS STRUCTURES
+    # ======================================================
+    dq = deque()
+    parent = {}
+    dist = {}
+
+    # start
+    start_endpoints = sorted(start_endpoints, key=lambda ep: (ep.node, ep.position))
+    for s in start_endpoints:
+        if (s, "A") not in dq:
+            dq.append((s, "A"))
+            dq.append((twin(s), "A"))
+            parent[(twin(s), "A")] = (s, "A")
+        
+        dist[(s, "A")] = 0.0
+        dist[(twin(s), "A")] = 0.0
+
+
+    # ======================================================
+    # RESULTS
+    # ======================================================
+    found_targets = {}   # endpoint -> end_state
+    #best_cost = float("inf") cofnij
+    best_cost = {}
+
+    # ======================================================
+    # BFS
+    # ======================================================
+    while dq:
+        endpoint, last_turn = dq.popleft()
+        cost = dist[(endpoint, last_turn)]
+
+        # 🔴 PRUNING
+        """
+        if cost > best_cost:
+            break
+        """
+        # ==================================================
+        # TARGET CHECK
+        # ==================================================
+        if endpoint in target_endpoints or twin(endpoint) in target_endpoints:
+            target_ep = endpoint if endpoint in target_endpoints else twin(endpoint)
+            pair_key = frozenset([target_ep, twin(target_ep)])
+
+            #found_targets = {pair_key: (endpoint, last_turn)}#usun
+            #break #usun
+
+            if pair_key not in best_cost or cost < best_cost[pair_key]: #usun
+                best_cost[pair_key] = cost #usun
+                found_targets[pair_key] = (endpoint, last_turn) #usun
+
+            continue
+            """
+            if cost < best_cost:
+                best_cost = cost
+                found_targets = {pair_key: (endpoint, last_turn)}
+
+            elif cost == best_cost:
+                # 🔥 tylko jeśli tej pary jeszcze nie mamy
+                if pair_key not in found_targets:
+                    found_targets[pair_key] = (endpoint, last_turn)
+            """
+        node = endpoint.node
+        pos = endpoint.position            
+        # ==================================================
+        # VERTICES
+        # ==================================================
+        if node in vertices:
+            for ep in sorted(endpoints[node], key=lambda ep: ep.position):
+                if ep == endpoint:
+                    continue
+
+                w = 0
+
+                # RIGHT
+                if (pos + 1) % 3 == ep.position:
+                    new_turn = "R"
+                    if last_turn == "L":
+                        w = 1
+
+                # LEFT
+                elif (pos - 1) % 3 == ep.position:
+                    new_turn = "L"
+                    if last_turn == "R":
+                        w = 1
+
+                else:
+                    continue
+
+                new_cost = cost + w
+                state = (twin(ep), new_turn)
+
+                old = dist.get(state, float("inf"))
+
+                if new_cost < old:
+                    """
+                     or (
+                        new_cost == old and (endpoint.node, endpoint.position, last_turn) <
+                                          (parent[state][0].node, parent[state][0].position, parent[state][1])
+                    ):
+                    """
+                    dist[state] = new_cost
+                    parent[state] = (endpoint, last_turn)
+
+                    if w == 0:
+                        dq.appendleft(state)
+                    else:
+                        dq.append(state)
+
+        # ==================================================
+        # CROSSINGS
+        # ==================================================
+        if node in crossings:
+            for ep in sorted(endpoints[node], key=lambda ep: ep.position):
+                if ep == endpoint:
+                    continue
+
+                w = 0
+                new_turn = last_turn
+
+                # STRAIGHT                
+                if (pos + 2) % 4 == ep.position:
+                    transition = (min(pos, ep.position), max(pos, ep.position))
+
+                    if node in blocked_transitions and transition in blocked_transitions[node]:
+                        continue
+
+                    if node not in blocked_transitions:
+                        w = 1
+
+                        cross_ep_check = diagram.endpoints[(node, (pos - 1)%4)] if new_turn == "L" else diagram.endpoints[(node, (pos + 1)%4)]
+                        if cross_ep_check in target_endpoints or twin(cross_ep_check) in target_endpoints:
+                            target_ep = cross_ep_check if cross_ep_check in target_endpoints else twin(cross_ep_check)
+                            pair_key = frozenset([target_ep, twin(target_ep)])
+
+                            #found_targets = {pair_key: (endpoint, last_turn)}#usun
+                            #break #usun
+
+                            new_cost = cost + w
+                            state = (twin(ep), new_turn)
+
+                            old = dist.get(state, float("inf"))
+
+                            parent[state] = (endpoint, last_turn)
+
+
+                            if pair_key not in best_cost or new_cost < best_cost[pair_key]: #usun
+                                best_cost[pair_key] = new_cost #usun
+                                found_targets[pair_key] = (twin(ep), last_turn) #usun
+
+                            continue
+
+
+
+                # RIGHT
+                elif (pos + 1) % 4 == ep.position:
+                    new_turn = "R"
+                    if last_turn == "L":
+                        w = 1
+
+                # LEFT
+                elif (pos - 1) % 4 == ep.position:
+                    new_turn = "L"
+                    if last_turn == "R":
+                        w = 1
+
+                else:
+                    continue
+
+                new_cost = cost + w
+                state = (twin(ep), new_turn)
+
+                old = dist.get(state, float("inf"))
+
+                if new_cost < old:
+                    """
+                     or (
+                        new_cost == old and (endpoint.node, endpoint.position, last_turn) <
+                                          (parent[state][0].node, parent[state][0].position, parent[state][1])
+                    ):
+                    """
+                    dist[state] = new_cost
+                    parent[state] = (endpoint, last_turn)
+
+                    if w == 0:
+                        dq.appendleft(state)
+                    else:
+                        dq.append(state)
+
+    # ======================================================
+    # NO PATH
+    # ======================================================
+    if not found_targets:
+        return None
+
+    # ======================================================
+    # PATH RECONSTRUCTION
+    # ======================================================
+    def reconstruct(end_state):
+        path_states = []
+        ep, last_turn = end_state
+
+        #!!! if A return A
+        if last_turn == "A":
+            last_turn = "L"
+
+        if twin(ep) in target_endpoints:
+            path_states.append((twin(ep), last_turn))
+            cur = parent[end_state]
+        else:
+            cur = end_state
+
+        while cur in parent:
+            ep, turn = cur
+
+            if turn == "A":
+                path_states.append((ep, last_turn))
+                path_states.append((twin(ep), last_turn))
+            else:
+                path_states.append(cur)
+                path_states.append((twin(ep), turn))
+                last_turn = turn
+
+
+            cur = parent[cur]
+
+        ep, turn = cur
+        if not path_states or path_states[-1][0] != ep:
+            if turn == "A":
+                path_states.append((ep, last_turn))
+            else:
+                path_states.append(cur)
+
+        path_states.reverse()
+        return path_states
+
+    # ======================================================
+    # FINAL RESULT
+    # ======================================================
+    results = []
+    for key in sorted(found_targets):
+        end_state = found_targets[key]
+        path = reconstruct(end_state)
+        #results.append((best_cost, path)) odkomentuj
+        results.append((best_cost[key], path))
+
+    return results
 
 def max_between_nodes(diagram, node1, node2, allowed_type):
     """Finds the longest path with crossings of allowed type between two nodes (vertex or crossing) in a PlanarDiagram.
@@ -647,7 +921,7 @@ def insert_crossing(diagram, last_ep, turn, from_ep=None, to_ep=None, kind="unde
 
     return free_endpoints
 
-def insert_path_core(diagram, alternative_path, kind , max_path = None, outer = False):
+def insert_path_core(diagram, alternative_path, kind , max_path = None, outer = False, alt=False):
     """Builds a new strand in the diagram following the structure given by `alternative_path`.
 
     The function inserts a new strand step-by-step according to `alternative_path`, which is a sequence of
@@ -712,12 +986,26 @@ def insert_path_core(diagram, alternative_path, kind , max_path = None, outer = 
                     out = True
                     new_outer.append("S")
             
-            elif ep.node == prev_ep.node and ep.node in diagram.crossings and ep.position == (prev_ep.position + 2)%4:
+            elif ep.node == prev_ep.node and ep.node in diagram.crossings and ep.position == (prev_ep.position + 2)%4 and (
+                       (prev_turn == "R" and (
+                            diagram.endpoints[(prev_ep.node, (prev_ep.position+1)%4)].attr.get("outer") == True or
+                            diagram.twin(diagram.endpoints[(prev_ep.node, (prev_ep.position+1)%4)]).attr.get("outer") == True
+                        )) or 
+                        (prev_turn == "L" and (
+                            diagram.endpoints[(prev_ep.node, (prev_ep.position-1)%4)].attr.get("outer") == True or 
+                            diagram.twin(diagram.endpoints[(prev_ep.node, (prev_ep.position-1)%4)]).attr.get("outer") == True
+                        ))
+                  
+                ): #po and dopisalam
                 out = True
                 new_outer.append("S")
              
     #main core inserting algorithm
-    for ep, turn in alternative_path[1:]:
+    if alt:
+        new_alt_path = []
+
+    for i in range(1, len(alternative_path)):
+        ep, turn = alternative_path[i]
         ep_cross = need_crossing(prev_ep, prev_turn, ep, turn)
         if ep_cross is not None:
             # update whether we are inside or outside after crossing insertion
@@ -737,6 +1025,7 @@ def insert_path_core(diagram, alternative_path, kind , max_path = None, outer = 
                 if ep_cross == ep:
                     use_turn = prev_turn
 
+
             free = insert_crossing(diagram, ep_cross, use_turn, free_ep, None, kind)
 
 
@@ -748,6 +1037,17 @@ def insert_path_core(diagram, alternative_path, kind , max_path = None, outer = 
                 start_ep = free[0]
 
             free_ep = free[-1]
+
+
+            if alt:
+                if not new_alt_path:
+                    remember_turn = prev_turn
+                    new_alt_path.append((Endpoint(start_ep[0], start_ep[1]), remember_turn))
+                    new_alt_path.append((Endpoint(free_ep[0], free_ep[1]), remember_turn))                        
+
+                else:
+                    new_alt_path.append((diagram.twin(new_alt_path[-1][0]), remember_turn))
+                    new_alt_path.append((Endpoint(free_ep[0], free_ep[1]), remember_turn))
 
             # if we are currently on the outer face, record endpoint
             if outer == True and out == True:
@@ -766,11 +1066,17 @@ def insert_path_core(diagram, alternative_path, kind , max_path = None, outer = 
                     else:
                         new_outer.append("S")
 
-
         prev_ep, prev_turn = ep, turn
 
+
+
     if outer == True:
-        return start_ep, free_ep, new_outer
+        if alt == True:
+            return start_ep, free_ep, new_outer, new_alt_path   
+        else:          
+            return start_ep, free_ep, new_outer
+    elif alt == True:
+        return start_ep, free_ep, new_alt_path  
 
     return start_ep, free_ep
 
@@ -939,7 +1245,9 @@ def decide_insert_place_1ep(del_pos, first_pos, turn):
             pos1 = 1 if turn == "R" else 2
             return pos1
 
-def attach_ends(diagram, path, max_path, start_ep, free_ep, start = False):
+#!!!! path_end, nowe konce sciezki usuwanej (ktora przenosimy) jak na koncu byl crossing i zostal usuniety bo petla
+#V[0,1,2],V[3,4,5],V[6,7,3],V[8,5,9],X[7,10,11,12],X[12,13,14,15],X[15,14,9,4],X[16,17,8,18],X[16,18,19,20],X[21,1,17,20],X[19,13,22,23],X[21,23,24,2],X[22,11,10,25],X[24,25,6,0]
+def attach_ends(diagram, path, max_path, start_ep, free_ep, path_end1, path_end2, start = False):
     """Attaches the newly constructed strand to the diagram by connecting its end endpoints
     to the nodes at both ends of the original strand (`max_path`).
 
@@ -987,21 +1295,32 @@ def attach_ends(diagram, path, max_path, start_ep, free_ep, start = False):
     second_ep = path[1][0]
 
     node1 = first_ep.node
-    if node1 in diagram.vertices:
+
+    if path_end1: #bo to crossing ale zniknal
+        node1 = path_end1.node
+        pos1 = path_end1.position
+    
+    elif node1 in diagram.vertices:
         if node1 == second_ep.node:
             pos1 = decide_insert_place_2ep(first_del_ep.position, first_ep.position, second_ep.position)
 
         else:
             pos1 = decide_insert_place_1ep(first_del_ep.position, first_ep.position, first_turn)
 
-    if node1 in diagram.crossings:
+    elif node1 in diagram.crossings:
         pos1 = first_ep.position
+
 
     last_del_ep = max_path[-1]
     last_ep, last_turn = path[-1]
     second_to_last_ep, second_to_last_turn = path[-2]
     node2 = last_ep.node
-    if node2 in diagram.vertices:
+
+    if path_end2:
+        node2 = path_end2.node
+        pos2 = path_end2.position
+    
+    elif node2 in diagram.vertices:
         if node2 == second_to_last_ep.node:
             pos2 = decide_insert_place_2ep(last_del_ep.position, second_to_last_ep.position, last_ep.position)
 
@@ -1009,8 +1328,10 @@ def attach_ends(diagram, path, max_path, start_ep, free_ep, start = False):
             turn = "L" if last_turn == "R" else "R"
             pos2 = decide_insert_place_1ep(last_del_ep.position, last_ep.position, turn)
 
-    if node2 in diagram.crossings:
+    elif node2 in diagram.crossings:
         pos2 = last_ep.position
+
+
 
     if start_ep == None and free_ep == None:
         insert_endpoint(diagram, node1, pos1, (node2, pos2))
@@ -1040,16 +1361,19 @@ def crossing_to_arc(k, crossing, parity) -> None:
     if not isinstance(k.nodes[crossing], kp.Crossing):
         raise TypeError("Variable crossing must be of a crossing")
 
-
     # connect two arcs of a knot
     ep_a = k.nodes[crossing][parity]
     ep_b = k.nodes[crossing][parity + 2]
-    k.set_endpoint(ep_a, ep_b)
-    k.set_endpoint(ep_b, ep_a)
+
+    if ep_a.node in k.nodes and ep_b.node in k.nodes:
+        k.set_endpoint(ep_a, ep_b)
+        k.set_endpoint(ep_b, ep_a)
 
     # remove the crossing
     k.remove_node(crossing, remove_incident_endpoints=False)
 
+
+#!!!! opis
 def delete_path(diagram, max_path):
     """Removes a path (strand) from a planar diagram.
 
@@ -1070,6 +1394,7 @@ def delete_path(diagram, max_path):
             Updated diagram without the given path.
     """
     to_remove = []
+    path_end1, path_end2 = None, None
 
     for i in range(len(max_path) - 1):
         ep1 = max_path[i]
@@ -1078,11 +1403,18 @@ def delete_path(diagram, max_path):
         if (ep1.node == ep2.node and ep1.position == (ep2.position + 2) % 4):
             to_remove.append((ep1.node, (ep1.position + 1) % 2))
 
+            if ep1.node==max_path[0].node:
+                path_end1 = diagram.twin(Endpoint(max_path[0].node, (max_path[0].position+2)%4))
+
+            if ep1.node==max_path[-1].node:
+                path_end2 = diagram.twin(Endpoint(max_path[-1].node, (max_path[-1].position+2)%4))
+
+
     for node, parity in to_remove:
         if node in diagram.nodes:
             crossing_to_arc(diagram, node, parity)
 
-    return diagram
+    return path_end1, path_end2
 
 
 def perform_strand_flip(diagram, max_path, alternative_path, kind, outer = False):
@@ -1113,12 +1445,12 @@ def perform_strand_flip(diagram, max_path, alternative_path, kind, outer = False
         start_ep, free_ep, new_outer = insert_path_core(diagram, alternative_path, kind, max_path, outer = True)
     else:
         start_ep, free_ep = insert_path_core(diagram, alternative_path, kind, max_path)
-    delete_path(diagram, max_path)
+    path_end1, path_end2 = delete_path(diagram, max_path)
     if outer == True and new_outer and new_outer[0] == "S":
-        ep1 = attach_ends(diagram, alternative_path, max_path, start_ep, free_ep, start = True)
+        ep1 = attach_ends(diagram, alternative_path, max_path, start_ep, free_ep, path_end1, path_end2, start = True)
         new_outer[0] = ep1
     else:
-        attach_ends(diagram, alternative_path, max_path, start_ep, free_ep)        
+        attach_ends(diagram, alternative_path, max_path, start_ep, free_ep, path_end1, path_end2)        
     if outer == True:
         return new_outer
 

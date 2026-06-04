@@ -1,9 +1,14 @@
 import knotpy as kp
 from find_strand_flip_move_new import min_crossings_path, insert_path_core, find_and_perform_strand_flip, find_path_of_type, min_between_nodes, perform_strand_flip
+from find_strand_flip_move_new import min_crossings_path_all
 from knotpy.algorithms.sanity import sanity_check_raise_exception
 import sys
+import traceback
+from knotpy.classes.endpoint import Endpoint
 
-pd_text = "V(0,1,2);V(0,3,4);X(1,4,5,6);X(7,8,6,5);X(9,10,3,2);X(11,12,8,7);X(12,11,10,9)"
+pd_text = 'V(0,1,2);V(3,4,5);V(6,7,8);V(0,6,9);X(2,10,3,11);X(11,5,12,7);X(13,14,10,1);X(8,12,4,15);X(9,15,14,13)'
+#"V[0,1,2],V[0,3,4],V[5,3,6],V[7,8,9],X[10,11,12,4],X[13,14,11,10],X[1,12,7,15],X[14,13,5,8],X[6,2,15,9] "
+
 D = kp.from_pd_notation(pd_text)
 
 def strand_components(diagram):
@@ -143,9 +148,11 @@ def get_outerplanar_endpoints(diagram, node = None, subset = None, add_endpoints
 
     working_faces = faces
 
-
     if external_endpoints:
+        working_faces = [face for face in working_faces if all((ep in face) or (diagram.twin(ep) in face) for ep in external_endpoints)]
+        """
         working_faces = [face for face in working_faces if set(face).issuperset(external_endpoints)]
+        """
         if not working_faces:
             raise ValueError("No external face candidates")
 
@@ -183,12 +190,24 @@ def get_outerplanar_endpoints(diagram, node = None, subset = None, add_endpoints
             face for face in working_faces
             if score(face) == max_score
         ]
-            
+         
+    """   
     external_face = min(
         working_faces,
         key=lambda face: (-len(face), tuple(face))
     )
+    """
+    external_face = min(
+        working_faces,
+        key=lambda face: (
+            -len(face),
+            tuple(sorted((ep.node, ep.position) for ep in face))
+        )
+    )
 
+
+    remove_endpoints = [ep for ep in diagram.endpoints if ep.attr.get("outer")]
+    clear_outer_endpoints(remove_endpoints, remove_endpoints)
 
     for ep in external_face:
     	ep.attr["outer"] = True
@@ -250,6 +269,8 @@ def closest_node_to_outer_face(diagram):
     outer_nodes = {ep.node for ep in outer_endpoints}
     inner_nodes = [n for n in diagram.vertices if n not in outer_nodes]
     inner_endpoints = [ep for n in inner_nodes for ep in diagram.endpoints[n]]
+
+
     cost, path = min_crossings_path(
         diagram,
         start_endpoints=outer_endpoints,
@@ -257,8 +278,56 @@ def closest_node_to_outer_face(diagram):
         blocked_transitions={}
     )
 
+
     return path 
 
+
+
+def closest_node_to_outer_face_all(diagram, max_paths_per_target=1):
+    outer_endpoints = list(get_outerplanar_endpoints(diagram))
+    outer_nodes = {ep.node for ep in outer_endpoints}
+
+    inner_nodes = [n for n in diagram.vertices if n not in outer_nodes]
+    inner_endpoints = [ep for n in inner_nodes for ep in diagram.endpoints[n]]
+
+    results = min_crossings_path_all(
+        diagram,
+        start_endpoints=inner_endpoints,
+        target_endpoints=outer_endpoints,
+        blocked_transitions={}
+    )
+
+    if results is None:
+        return []
+
+    # wyciągamy same ścieżki
+    paths = [path for cost, path in results]
+
+
+
+    """
+    # 🔥 KLUCZ: ograniczenie liczby ścieżek
+    selected = []
+    seen_targets = set()
+
+    for path in paths:
+        end_ep = path[-1][0]
+        key = frozenset([end_ep, diagram.twin(end_ep)])
+
+        if key not in seen_targets:
+            selected.append(path)
+            seen_targets.add(key)
+
+        if len(selected) >= max_paths_per_target:
+            break
+    """
+
+    def path_key(path):
+        return tuple(
+            (ep.node, ep.position, turn)
+            for ep, turn in path
+        )
+    return sorted(paths, key=path_key)#selected
 
 def node_in_multiple_components(node, components):
     """Checks whether a given node appears in more than one connected component.
@@ -340,6 +409,7 @@ def over_or_under(diagram, node):
     else:
         return "under"
 
+
 def drag_node_out(diagram, path, kind, knot_diagrams):
     """Moves a node from the interior of the diagram to the outer face by reconstructing its connections along a given path.
 
@@ -384,28 +454,43 @@ def drag_node_out(diagram, path, kind, knot_diagrams):
     Before: (a0[outer], e3[outer], c1[outer], g1[outer])
     After dragging out node d :  (d0[outer], k2[outer], a0[outer], e3[outer], c1[outer], g1[outer], i3[outer])
     """
-    drag_ep = path[-1][0] #ep of a node that we will drag this node out by
+
     first = path[0]
     outer_endpoints = list(get_outerplanar_endpoints(diagram))
     all_outer_nodes = len(outer_endpoints)
 
-    node = drag_ep.node
-    end_endpoints = []
 
     turn = 'L' if first[1] == 'R' else 'R'
     path[0] = (first[0], turn)
     if path[1][0] == diagram.twin(first[0]):
         path[1] = (path[1][0], turn)
+        ep_1 = path[1][0]
+        ep_2 = path[2][0]
+        i=2
+        while ep_2.node == ep_1.node and ep_1.node in diagram.crossings and ep_2.position == (ep_1.position + 2)%4:
+            path[i] = (ep_2, turn)
+            ep_1 = ep_2
+            ep_2 = path[i+1][0]
+        path[i+1] = (ep_2, turn)
 
+    if len(path) >= 2 and path[-2][0].node == path[-1][0].node:
+        drag_ep = path[-2][0]
+    else:
+        drag_ep = path[-1][0] #ep of a node that we will drag this node out by
+
+    node = drag_ep.node
+    end_endpoints = []
     endpoints = diagram.endpoints[node]
-    if first[1] == 'R':
+
+
+    if path[-1][1] == 'R':
         i = (drag_ep.position + 1) % len(endpoints)
     else:
         i = drag_ep.position
 
     order = endpoints[i:] + endpoints[:i]
 
-    if first[1] == 'L':
+    if path[-1][1] == 'L':
         order = order[::-1]
 
     for ep in order:
@@ -424,6 +509,149 @@ def drag_node_out(diagram, path, kind, knot_diagrams):
 
     get_outerplanar_endpoints(diagram)
 
+
+
+def drag_node_out_all(diagram, path, kind, knot_diagrams):
+    """Moves a node from the interior of the diagram to the outer face by reconstructing its connections along a given path.
+
+    The function takes a path (typically produced by closest_node_to_outer_face) and uses it to
+    systematically relocate a node to the outer face by locally rewiring the diagram.
+
+    At the beginning, the first element of the path is modified to enforce a crossing with the outer face,
+    ensuring that the node is pushed outward and becomes exposed to the boundary of the diagram.
+
+    Then, along the path, the function builds new strand structures (3 strands for a vertex, 4 for a crossing).
+    New crossings are created according to the specified kind ("over" or "under").
+
+    Finally, the constructed strands are connected together on the outside, forming the extracted node
+    in its new outer position. On the inside, the remaining ends are connected to the free twin endpoints
+    left behind by the original node, completing the rerouting of all connections.
+
+    Args:
+    diagram : PlanarDiagram
+        Diagram being modified in-place.
+    path : list[tuple[Endpoint, str]]
+        Path from outer face to the node being dragged out, where the second element indicates L/R turn.
+    kind : str
+        Crossing type used during reconstruction ("over" or "under").
+    knot_diagrams : list
+        Container for storing intermediate diagram states.
+
+    Returns:
+    None
+
+    Example:
+    >>> pd_text = "V[0,1,2],V[3,4,5],V[6,7,8],V[9,10,11],X[12,5,7,2],X[1,11,3,12],X[0,6,13,9],X[8,4,10,13]"
+    >>> D = kp.from_pd_notation(pd_text)
+    >>> print("Before:", get_outerplanar_endpoints(D))
+    >>> path = closest_node_to_outer_face(D)
+
+    >>> ep, _ = path[-1]
+    >>> kind = over_or_under(D, ep.node)
+
+    >>> drag_node_out(D, path, kind, knot_diagrams=[])
+    >>> print("After dragging out node", ep.node, ": ", get_outerplanar_endpoints(D))
+    
+    Before: (a0[outer], e3[outer], c1[outer], g1[outer])
+    After dragging out node d :  (d0[outer], k2[outer], a0[outer], e3[outer], c1[outer], g1[outer], i3[outer])
+    """
+    drag_node = path[0][0].node
+    if path[0][1] == "A": #!!!zawsze L?
+        for i, state in enumerate(path):
+            path[i] = (path[i][0], "L")
+
+    last = path[-1]
+
+    outer_endpoints = list(get_outerplanar_endpoints(diagram))
+    all_outer_nodes = len(outer_endpoints)
+
+    if path[-2][0] != diagram.twin(last[0]):
+        path.append((diagram.twin(last[0]), last[1]))
+
+    last_ep, last_turn = path[-1]
+    prev_ep, prev_turn = path[-2]
+    out = False
+    if prev_ep.attr.get("outer") or diagram.twin(prev_ep).attr.get("outer"):
+        if last_ep.attr.get("outer") or diagram.twin(last_ep).attr.get("outer"):
+            node_obj = diagram.nodes[prev_ep.node]
+            dg = node_obj.degree()
+            if (
+                (last_ep.node == prev_ep.node) or 
+                (last_ep.node != prev_ep.node and (
+                    (prev_turn == "R" and (
+                        diagram.endpoints[(prev_ep.node, (prev_ep.position-1)%dg)].attr.get("outer") == True or
+                        diagram.twin(diagram.endpoints[(prev_ep.node, (prev_ep.position-1)%dg)]).attr.get("outer") == True
+                    )) or 
+                    (prev_turn == "L" and (
+                        diagram.endpoints[(prev_ep.node, (prev_ep.position+1)%dg)].attr.get("outer") == True or 
+                        diagram.twin(diagram.endpoints[(prev_ep.node, (prev_ep.position+1)%dg)]).attr.get("outer") == True
+                    ))
+                ))
+            ):
+                out = True
+        
+        elif last_ep.node == prev_ep.node and last_ep.node in diagram.crossings and last_ep.position == (prev_ep.position + 2)%4 and (
+                   (prev_turn == "R" and (
+                        diagram.endpoints[(prev_ep.node, (prev_ep.position+1)%4)].attr.get("outer") == True or
+                        diagram.twin(diagram.endpoints[(prev_ep.node, (prev_ep.position+1)%4)]).attr.get("outer") == True
+                    )) or 
+                    (prev_turn == "L" and (
+                        diagram.endpoints[(prev_ep.node, (prev_ep.position-1)%4)].attr.get("outer") == True or 
+                        diagram.twin(diagram.endpoints[(prev_ep.node, (prev_ep.position-1)%4)]).attr.get("outer") == True
+                    ))
+              
+            ): #po and dopisalam
+            out = True
+
+
+    if out == False:
+        if last[1] == 'R':
+            turn = 'L'
+            pos = (path[-1][0].position - 1) % (len(diagram.endpoints[path[-1][0].node]))
+            add_ep = Endpoint(path[-1][0].node, pos)
+        else:
+            turn = 'R'
+            pos = (path[-1][0].position + 1) % (len(diagram.endpoints[path[-1][0].node]))
+            add_ep = Endpoint(path[-1][0].node, pos)
+        path.append((add_ep, turn))
+
+
+    if len(path) >= 2 and path[1][0].node == path[0][0].node:
+        drag_ep = path[1][0]
+    else:
+        drag_ep = path[0][0] #ep of a node that we will drag this node out by
+
+    node = drag_ep.node
+    end_endpoints = []
+    endpoints = diagram.endpoints[node]
+
+    if path[0][1] == 'L':
+        i = (drag_ep.position + 1) % len(endpoints)
+    else:
+        i = drag_ep.position
+
+    order = endpoints[i:] + endpoints[:i]
+
+    if path[0][1] == 'L':
+        order = order[::-1]
+
+    cross_with_outer=[]
+    for ep in order:
+        free_ep, start_ep, new_alt_path = insert_path_core(diagram, path, kind, alt=True) 
+        path = new_alt_path
+        diagram.set_endpoint(free_ep, diagram.twin(ep)) #free/twin
+        diagram.set_endpoint(diagram.twin(ep), free_ep)
+        diagram.set_endpoint(ep, start_ep)
+        diagram.set_endpoint(start_ep, ep) #start/ep
+
+        cross_with_outer.append(start_ep[0])
+
+    for clean_node in cross_with_outer:
+        for ep1 in diagram.endpoints[clean_node]:
+            ep1.attr.pop("outer", None)
+
+
+    get_outerplanar_endpoints(diagram, node=drag_node)
 
 def add_diagram_state(diagram, knot_diagrams):
     """Creates a validated copy of the diagram and stores it in the history list.
@@ -520,7 +748,7 @@ def reduce_strand_flip(diagram, knot_diagrams, dont_cover = None):
         if updated == True:
             if dont_cover:
                 change_outer(diagram, new_outer, dont_cover, knot_diagrams)
-            add_diagram_state(diagram, knot_diagrams)
+        #    add_diagram_state(diagram, knot_diagrams)
 
 def reduce_drag_ep(diagram, drag_node, kind, knot_diagrams, dont_cover = None):
     """Attempts to simplify the newly extracted node by searching for local strand flip moves
@@ -560,10 +788,11 @@ def reduce_drag_ep(diagram, drag_node, kind, knot_diagrams, dont_cover = None):
             new_outer = perform_strand_flip(diagram, max_path, alternative_path, kind, outer = True)
             if dont_cover:
                 change_outer(diagram, new_outer, drag_node, knot_diagrams)
-            add_diagram_state(diagram, knot_diagrams)
+        #    add_diagram_state(diagram, knot_diagrams)
 
 
 def diagram_to_outerplanar(D, knot_diagrams):
+    #!!! błedy w drag_node_out
     """Transforms a diagram into an outerplanar form by iteratively extracting inner nodes to the outer face
     and simplifying the resulting structure.
 
@@ -599,7 +828,7 @@ def diagram_to_outerplanar(D, knot_diagrams):
     PlanarDiagram
         Canonical outerplanar form of the diagram (or last valid state if iteration limit is exceeded).
     """
-    add_diagram_state(D, knot_diagrams)
+    #add_diagram_state(D, knot_diagrams)
     reduce_strand_flip(D, knot_diagrams)
 
     outer_endpoints = list(get_outerplanar_endpoints(D))
@@ -607,7 +836,7 @@ def diagram_to_outerplanar(D, knot_diagrams):
     inner_nodes = [n for n in D.vertices if n not in outer_nodes]
 
     i = 0
-    max_iter = 50
+    max_iter = 100
 
     while inner_nodes:
 
@@ -621,7 +850,7 @@ def diagram_to_outerplanar(D, knot_diagrams):
         kind = over_or_under(D, ep.node)
 
         drag_node_out(D, path, kind, knot_diagrams)
-        add_diagram_state(D, knot_diagrams)
+        #add_diagram_state(D, knot_diagrams)
 
         reduce_drag_ep(D, ep.node, kind, knot_diagrams, dont_cover=ep.node)
         reduce_strand_flip(D, knot_diagrams, dont_cover=ep.node)
@@ -638,16 +867,296 @@ def diagram_to_outerplanar(D, knot_diagrams):
 
     return kp.canonical(D)
 
+def all_outer_len(diagram, outer_len):
+    diagrams = []
+    faces = [face for face in diagram.faces if len(face) == outer_len]
 
-if __name__ == "__main__":
-    knot_diagrams=[]
-    try:
-        diagram_to_outerplanar(D, knot_diagrams)
-        output_path = "C:/Users/gozma/Desktop/uw_pliki/licencjat/flip_strand.pdf"
-        kp.export_pdf(knot_diagrams, output_path)
+    for face in faces:
+        d = diagram.copy()
 
-    except RuntimeError as e:
-        if "Przekroczono limit 15 iteracji" in str(e):
-            output_path = "C:/Users/gozma/Desktop/uw_pliki/licencjat/flip_strand.pdf"
-            kp.export_pdf(knot_diagrams, output_path)
+        # wyczyść outer w kopii
+        for ep in d.endpoints:
+            ep.attr.pop("outer", None)
+
+        # znajdź odpowiadającą face w kopii
+        copy_face = [
+            d.endpoint_from_pair((ep.node, ep.position))
+            for ep in face
+        ]
+
+        # ustaw outer
+        for ep in copy_face:
+            ep.attr["outer"] = True
+
+        diagrams.append(d)
+
+    return diagrams
+
+def has_vertex_face(diagram):
+    all_vertices = set(diagram.vertices)
+
+    for face in diagram.faces:
+        face_vertices = {ep.node for ep in face if ep.node in diagram.vertices}
+
+        if face_vertices == all_vertices:
+            for ep in diagram.endpoints:
+                ep.attr.pop("outer", None)
+
+             # ustaw outer
+            for ep in face:
+                ep.attr["outer"] = True
             
+            #add_diagram_state(diagram, knot_diagrams)
+            return True
+
+    return False
+
+
+def outside(diagram):
+    external = {
+        ep.node
+        for ep in diagram.endpoints
+        if ep.attr.get("outer") and ep.node in diagram.vertices
+    }
+
+    return external == set(diagram.vertices)
+
+def expand(diagram, knot_diagrams):
+    next_states = []
+    outer_len = len([
+        ep for ep in diagram.endpoints
+        if ep.attr.get("outer")
+    ])
+
+    for diagram in all_outer_len(diagram, outer_len):
+
+        if outside(diagram):
+            continue
+
+        paths = closest_node_to_outer_face_all(diagram, max_paths_per_target=3)
+        for path in paths:
+            new_diag = diagram.copy()
+
+            ep, _ = path[0]
+            kind = over_or_under(new_diag, ep.node)
+
+            #print("drag")
+            drag_node_out_all(new_diag, path, kind, knot_diagrams)
+            #print("red")
+            reduce_drag_ep(new_diag, ep.node, kind, knot_diagrams, dont_cover=ep.node)
+            #print("all")
+            reduce_strand_flip(new_diag, knot_diagrams, dont_cover=ep.node)
+
+            #explore_outerplanar(new_diag, visited, results, depth+1, max_depth)
+            get_outerplanar_endpoints(new_diag)
+            next_states.append(new_diag)
+
+    return next_states
+
+
+
+from collections import deque
+
+def max_X_face(diagram):
+    faces = diagram.faces
+
+    def node_score(face):
+        return len({ep.node for ep in face if ep.node in diagram.crossings})
+
+    best_node_score = max(node_score(face) for face in faces)
+
+    faces = [
+        face for face in faces
+        if node_score(face) == best_node_score
+    ]
+
+    for ep in faces[0]:
+        ep.attr["outer"] = True
+
+import time
+
+
+from collections import deque
+import time
+
+
+def explore_seed_merge(seeds, results=[], knot_diagrams=[], max_depth=30):
+
+    visited = set()
+    canon_to_seeds = {}
+
+    # każda grupa = SET seedów (STABILNA tożsamość)
+    seed_groups = [frozenset({i}) for i in range(len(seeds))]
+    group_best = {}
+
+    frontier = deque()
+
+    for seed_id, d in enumerate(seeds):
+        max_X_face(d)
+        frontier.append((d, 0, frozenset({seed_id})))
+
+    total_seeds = len(seeds)
+
+    # -------------------------
+    # GROUP MERGE (UNION)
+    # -------------------------
+    def add_set(new_set):
+
+        nonlocal seed_groups, group_best
+
+        new_set = frozenset(new_set)
+
+        affected = []
+        merged = set(new_set)
+
+        # znajdź grupy które się łączą
+        for g in seed_groups:
+            if not merged.isdisjoint(g):
+                affected.append(g)
+                merged |= set(g)
+
+        affected = set(affected)
+
+        # usuń stare grupy
+        seed_groups[:] = [g for g in seed_groups if g not in affected]
+
+        merged = frozenset(merged)
+
+        # BEST merge
+        pending = []
+        for g in affected:
+            if g in group_best:
+                pending.append(group_best[g])
+                group_best.pop(g, None)
+
+        if pending:
+            group_best[merged] = min(
+                pending,
+                key=lambda c: (len(kp.to_pd_notation(c)), kp.to_pd_notation(c))
+            )
+        else:
+            group_best[merged] = None
+
+        seed_groups.append(merged)
+
+    # -------------------------
+    # BFS
+    # -------------------------
+    start_time = time.time()
+    TIME_LIMIT = 100
+
+    while frontier:
+
+        if time.time() - start_time > TIME_LIMIT:
+            print("⏱ TIME LIMIT REACHED")
+            break
+
+        new_frontier = []
+
+        for diagram, depth, origins in frontier:
+
+            canon = kp.canonical(diagram)
+
+            outer_len = len([ep for ep in diagram.endpoints if ep.attr.get("outer")])
+
+            key = (canon, outer_len)
+
+                # merge seeds by canonical
+#            print(canon)
+#            print("SEED:", seed_groups)
+#            print("BEST:", group_best)
+#            print("canon", canon_to_seeds)
+            if canon in canon_to_seeds:
+                canon_to_seeds[canon] |= origins
+                add_set(canon_to_seeds[canon])
+            else:
+                canon_to_seeds[canon] = set(origins)
+
+
+            # find group (STABLE)
+            gid = None
+            for s in origins:
+                for g in seed_groups:
+                    if s in g:
+                        gid = g
+                        break
+                if gid is not None:
+                    break
+
+                # BEST update
+            if gid is not None:
+                if gid not in group_best:
+                    group_best[gid] = canon
+                else:
+                    old = group_best[gid]
+
+                    p_new = kp.to_pd_notation(canon)
+                    p_old = kp.to_pd_notation(old)
+
+                    if (len(p_new), p_new) < (len(p_old), p_old):
+                        group_best[gid] = canon
+
+#           print("PO")
+#           print("canon", canon_to_seeds)
+#            print("SEED:", seed_groups)
+#            print("Best:", group_best)
+            # stop condition
+            if len(seed_groups) == 1 and len(seed_groups[0]) == total_seeds:
+                print("🎯 ALL SEEDS MERGED!")
+
+                final_group = seed_groups[0]
+                final_canon = group_best.get(final_group)
+
+                print("\nFINAL CANON:")
+                print(final_canon)
+                print(kp.to_pd_notation(final_canon))
+
+                return True
+
+            # pruning
+            if key in visited:
+                continue
+
+            visited.add(key)
+
+            if outside(diagram):
+                continue
+
+            if depth >= max_depth:
+                continue
+
+            for nxt in expand(diagram, knot_diagrams):
+                new_frontier.append((nxt, depth + 1, set(origins)))
+
+        frontier = new_frontier
+
+    print("⚠️ NOT FULL MERGE")
+
+    for g in seed_groups:
+        print("GROUP:", g)
+        print("CANON:", group_best.get(g))
+        print(kp.to_pd_notation(group_best.get(g)))
+        print("-" * 40)
+
+
+    return False
+
+
+
+
+#        "V[0,1,2],V[0,3,4],V[1,5,6],X[2,7,8,3],X[4,9,10,11],V[5,11,12],X[13,8,7,6],X[9,13,12,10]",
+if __name__ == "__main__":
+    #4,5, 6
+    #2,3
+    pd_codes=[
+        "V[0,1,2],V[3,4,5],V[6,7,8],X[5,9,10,11],V[9,12,6],X[2,13,7,14],X[15,14,12,4],X[15,3,11,0],X[13,1,10,8]",
+        "V[0,1,2],V[3,4,5],V[6,7,4],V[0,8,9],X[5,7,8,2],X[1,9,6,3]"]
+
+    results=[]
+    seeds=[]
+    knot_diagrams=[]
+    for pd_code in pd_codes:
+        seeds.append(kp.from_pd_notation(pd_code))
+    print(explore_seed_merge(seeds, results, knot_diagrams, max_depth=200))
+    output_path = "check_outer.pdf"
+    #kp.export_pdf(knot_diagrams2, output_path)
