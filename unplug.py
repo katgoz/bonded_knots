@@ -1,10 +1,80 @@
 from itertools import product
 import knotpy as kp
-from find_strand_flip_move_new import delete_path
+from find_strand_flip_move_new import delete_path, components_number
 from outer_nodes import reduce_strand_flip
 from collections import Counter, defaultdict
+from topoly import jones
 
+def pure_strand_components_count(diagram):
+    """Finds the number of strand components that do not pass through any vertex.
 
+    Performs a depth-first search (DFS) over endpoints, tracking if any node 
+    in the current connected component belongs to diagram.vertices.
+
+    Args:
+        diagram: PlanarDiagram object to analyze.
+
+    Returns:
+        int: The total number of independent strand components containing zero vertices.
+    """
+    visited = set()
+    components_count = 0
+
+    for ep in diagram.endpoints:
+        if ep in visited:
+            continue
+
+        # Inicjalizujemy stertę oraz flagę dla nowego komponentu
+        stack = [ep]
+        has_vertex = False  # Flaga śledząca, czy w tym komponencie jest vertex
+
+        while stack:
+            curr = stack.pop()
+            
+            # Zabezpieczenie przed None, gdyby diagram był uszkodzony lub w trakcie mutacji
+            if curr is None:
+                continue
+
+            if curr in visited:
+                continue
+
+            visited.add(curr)
+
+            # Sprawdzamy, czy aktualny węzeł jest typu vertex
+            if curr.node in diagram.vertices:
+                has_vertex = True
+
+            # 1. Przejście po łuku (twin)
+            twin = diagram.twin(curr)
+            if twin and twin not in visited:
+                stack.append(twin)
+
+            # 2. Przejście przez węzły w zależności od typu
+            if curr.node in diagram.crossings:
+                pos = curr.position
+                if pos == 0:
+                    nxt = diagram.endpoints.get((curr.node, 2))
+                elif pos == 2:
+                    nxt = diagram.endpoints.get((curr.node, 0))
+                elif pos == 1:
+                    nxt = diagram.endpoints.get((curr.node, 3))
+                else:
+                    nxt = diagram.endpoints.get((curr.node, 1))
+
+                if nxt and nxt not in visited:
+                    stack.append(nxt)
+
+            elif curr.node in diagram.vertices:
+                # Idziemy dalej, ale wiemy już, że ten komponent ma vertex (flaga has_vertex = True)
+                for ep2 in diagram.endpoints[curr.node]:
+                    if ep2 and ep2 not in visited:
+                        stack.append(ep2)
+
+        # Dopiero po zbadaniu CAŁEGO komponentu sprawdzamy, czy był czysty (bez vertices)
+        if not has_vertex:
+            components_count += 1
+
+    return components_count
 
 def all_unplug_choices(diagram):
     """
@@ -77,7 +147,12 @@ def apply_choice(diagram, choice):
 
     d = diagram.copy()
     while len(choice) != 0:
+        if not d:
+            break
         v, pos = choice[0]
+
+        start_number = components_number(d)
+        start_pure_X_number = pure_strand_components_count(d)
 
         del_ep = d.endpoints[(v, pos)]
         del_twin = d.twin(del_ep)
@@ -104,18 +179,40 @@ def apply_choice(diagram, choice):
 
         if len(remove)>2:
             delete_path(d, remove)
-        
+
+
         d.remove_endpoint(start_tuple)
         d.remove_endpoint(end_tuple)
 
+
         choice = update_choice(choice, start_tuple[0], start_tuple[1])
         choice = update_choice(choice, end_tuple[0], end_tuple[1])
+
+        if d:
+            d, choice = clean_diagram_from_invalid_seeds(d, choice = choice)
+
+
+        end_pure_X_number = pure_strand_components_count(d)
+
+        #all pure X have to stay:
+        while end_pure_X_number<start_pure_X_number:
+            kp.add_unknot(d)
+            end_pure_X_number+=1        
+
+        end_number = components_number(d)
+        #maximum 1 component can be gone after deleting 1 strand
+        while end_number<start_number-1:
+            kp.add_unknot(d)
+            end_number+=1
+
+
+
 
 
 
     return d
 
-def clean_diagram_from_invalid_seeds(diagram):
+def clean_diagram_from_invalid_seeds(diagram, choice=None):
     """
     Remove broken strands and dead-end paths from the diagram.
 
@@ -172,7 +269,7 @@ def clean_diagram_from_invalid_seeds(diagram):
                         curr_ep = None
                 else:
                     neighbor_v = twin_ep.node
-                    if neighbor_v in d.vertices and neighbor_v not in processed_vertices:
+                    if neighbor_v in d.vertices and neighbor_v not in processed_vertices and len(diagram.endpoints[neighbor_v])==2:
                         invalid_vertices.append(neighbor_v)
                     curr_ep = None
                     delete_path(d, path_to_delete)
@@ -183,6 +280,11 @@ def clean_diagram_from_invalid_seeds(diagram):
                     
                     d.remove_endpoint(start_tuple)
                     d.remove_endpoint(end_tuple)
+
+                    if choice is not None:
+                        choice = update_choice(choice, start_tuple[0], start_tuple[1])
+                        choice = update_choice(choice, end_tuple[0], end_tuple[1])
+
                         
 
 
@@ -192,6 +294,9 @@ def clean_diagram_from_invalid_seeds(diagram):
                    d.remove_endpoint((v, pos))
 
             d.remove_node(v)
+
+    if choice is not None:
+        return d, choice
 
     return d
 
@@ -256,7 +361,6 @@ def get_strand_diagram_components(diagram):
     Returns:
         A list of isolated sub-diagram components.
     """
-
 
     while True:
         visited_endpoints = set()
@@ -411,10 +515,9 @@ def get_canonical_component_counts(pd_notation):
     base_diagram = kp.from_pd_notation(pd_notation)
     
     choice_profiles = {}
-    
     for choice_variant in all_unplug_choices(base_diagram):
-        choice_key = tuple(sorted(choice_variant))
 
+        choice_key = tuple(sorted(choice_variant))
         modified_d = apply_choice(base_diagram.copy(), choice_variant)
         
         cleaned_d = clean_diagram_from_invalid_seeds(modified_d)
@@ -422,11 +525,10 @@ def get_canonical_component_counts(pd_notation):
         kp.remove_bivalent_vertices(cleaned_d, match_attributes=False)
 
         kp.remove_empty_nodes(cleaned_d)
-
         
         raw_components = kp.disjoint_union_decomposition(cleaned_d)
 
-
+        
         #!!! TODO: this can probably be done a bit better (reduce_strand_flip with unknot somewhere higher?)
         components = []
         for raw_comp in raw_components:
@@ -435,12 +537,8 @@ def get_canonical_component_counts(pd_notation):
 
                 for raw2 in components2:
                     if len(raw2) > 1:
-                        reduce_strand_flip(raw2, [])
-                        if get_strand_diagram_components(raw2) == []:
-
-                            components.append(kp.add_unknot(raw2))
-                        else:
-                            components.extend(get_strand_diagram_components(raw2))
+                        reduce_strand_flip(raw2, [], outer = False)
+                        components.extend(get_strand_diagram_components(raw2))
                     else:
                         components.append(raw2)
             else:
@@ -460,7 +558,7 @@ def get_canonical_component_counts(pd_notation):
 
 
 
-def compare_multiple_pd_groups(pd_codes_list, depth=1, flype=False):
+#def compare_multiple_pd_groups(pd_codes_list, depth=1, flype=False):
     """
     Compare multiple diagram strings and group together those that yield identical results.
 
@@ -479,7 +577,7 @@ def compare_multiple_pd_groups(pd_codes_list, depth=1, flype=False):
         A list of groups, where each group contains the indices of diagrams 
         sharing identical outcome distributions.
     """
-
+"""
     if not pd_codes_list:
         print("No PD codes provided for comparison.")
         return []
@@ -487,6 +585,7 @@ def compare_multiple_pd_groups(pd_codes_list, depth=1, flype=False):
     all_diagram_profiles = []
     for index, pd_string in enumerate(pd_codes_list):
         profile_dict = get_canonical_component_counts(pd_string)
+
         all_diagram_profiles.append(profile_dict)
 
 
@@ -513,14 +612,15 @@ def compare_multiple_pd_groups(pd_codes_list, depth=1, flype=False):
             normalized_components = []
             for raw_comp_str in component_tuple:
                 if raw_comp_str in canonical_lookup:
-                    reduce_strand_flip(canonical_lookup[raw_comp_str], [])
+                    reduce_strand_flip(canonical_lookup[raw_comp_str], [], outer = False)
                     unified_comp = canonical_lookup[raw_comp_str]
                 else:
-                    reduce_strand_flip(raw_comp_str, [])
+                    reduce_strand_flip(raw_comp_str, [], outer = False)
                     unified_comp = kp.canonical(raw_comp_str)
                 normalized_components.append(unified_comp)
             
             normalized_profile[choice_key] = tuple(sorted(normalized_components))
+
             
         normalized_dictionaries.append(normalized_profile)
 
@@ -539,24 +639,185 @@ def compare_multiple_pd_groups(pd_codes_list, depth=1, flype=False):
 
     grouped_indices = list(profile_groups.values())
 
+    group_outcome_keys = {}
     print("\n--- TOPOLOGICAL GROUPING RESULTS ---")
     print(f"Found {len(grouped_indices)} unique topological distribution group(s).")
     for group_idx, indices in enumerate(grouped_indices):
         sample_profile = normalized_dictionaries[indices[0]]
         sorted_summary = dict(sorted(Counter(sample_profile.values()).items(), key=lambda x: str(x[0])))
         
-        print(f" Group {group_idx + 1}: Diagrams {indices} -> Outcomes Summary: {sorted_summary}")
+        formatted_summary = {}
+
+        for outcome, count in sorted_summary.items():
+            if not outcome:
+                formatted_outcome = ("empty",)   # lub ()
+            else:
+                formatted_outcome = tuple(
+                    kp.to_pd_notation(diag)
+                    for diag in outcome
+                )
+
+            formatted_summary[formatted_outcome] = count
+
+        print(
+            f"Group {group_idx + 1}: Diagrams {indices} -> Outcomes Summary: {formatted_summary}"
+        )
+
+        group_outcome_keys[group_idx + 1] = set(formatted_summary.keys())
+
+    if len(group_outcome_keys) > 1:
+        first_group_keys = list(group_outcome_keys.values())[0]
+        
+        all_groups_have_same_outcome_keys = all(
+            keys == first_group_keys for keys in group_outcome_keys.values()
+        )
+        
+        if all_groups_have_same_outcome_keys:
+            print("\n[!] SAME STRUCTURES (Grupy dają inne rozkłady, ale generują dokładnie ten sam zestaw splotów wynikowych!)")
+    # ----------------------------------------------------------------------
         
     return grouped_indices
+"""
+def compare_multiple_pd_groups(pd_codes_list, depth=1, flype=False):
+    """
+    Compare multiple diagram strings and group together those that yield identical results.
 
+    This function takes a list of Planar Diagram strings and builds an unplugging 
+    profile for each one. It uses Reidemeister moves to identify and merge 
+    topologically equivalent component shapes across different diagrams. Finally, 
+    it groups the original diagrams together if they produce the exact same overall 
+    distribution of simplified outcome shapes.
+
+    Args:
+        pd_codes_list: A list of Planar Diagram notation strings to compare.
+        depth: The search depth for Reidemeister simplifications.
+        flype: Whether to include flype moves during reduction.
+
+    Returns:
+        A list of groups, where each group contains the indices of diagrams 
+        sharing identical outcome distributions.
+    """
+
+    
+    if not pd_codes_list:
+        print("No PD codes provided for comparison.")
+        return []
+
+    all_diagram_profiles = []
+    for index, pd_string in enumerate(pd_codes_list):
+        profile_dict = get_canonical_component_counts(pd_string)
+        all_diagram_profiles.append(profile_dict)
+
+    all_observed_single_components = set()
+    for profile_dict in all_diagram_profiles:
+        for component_tuple in profile_dict.values():
+            all_observed_single_components.update(component_tuple)
+
+    diagram_objects = [k for k in all_observed_single_components]
+    equivalence_map = kp.reduce_equivalent_diagrams(diagram_objects, depth=depth, flype=flype)
+
+    canonical_lookup = {}
+    for representative, equivalent_set in equivalence_map.items():
+        rep_str = kp.canonical(representative)
+        for eq_obj in equivalent_set:
+            eq_str = kp.canonical(eq_obj)
+            canonical_lookup[eq_str] = rep_str
+
+    normalized_dictionaries = []
+    for original_profile in all_diagram_profiles:
+        normalized_profile = {}
+        
+        for choice_key, component_tuple in original_profile.items():
+            normalized_components = []
+            for raw_comp_str in component_tuple:
+                if raw_comp_str in canonical_lookup:
+                    reduce_strand_flip(canonical_lookup[raw_comp_str], [], outer = False)
+                    unified_comp = canonical_lookup[raw_comp_str]
+                else:
+                    reduce_strand_flip(raw_comp_str, [], outer = False)
+                    unified_comp = kp.canonical(raw_comp_str)
+                normalized_components.append(unified_comp)
+            
+            normalized_profile[choice_key] = tuple(sorted(normalized_components))
+
+        normalized_dictionaries.append(normalized_profile)
+
+    profile_groups = defaultdict(list)
+    
+    for idx, profile in enumerate(normalized_dictionaries):
+        outcome_counts = Counter(profile.values())
+
+        stable_signature = tuple(
+            sorted(outcome_counts.items(), key=lambda x: str(x[0]))
+        )
+        
+        profile_groups[stable_signature].append(idx)
+
+    grouped_indices = list(profile_groups.values())
+
+    group_outcome_keys = {}
+    print("\n--- TOPOLOGICAL GROUPING RESULTS ---")
+    print(f"Found {len(grouped_indices)} unique topological distribution group(s).")
+    for group_idx, indices in enumerate(grouped_indices):
+        sample_profile = normalized_dictionaries[indices[0]]
+        sorted_summary = dict(sorted(Counter(sample_profile.values()).items(), key=lambda x: str(x[0])))
+        
+        formatted_summary = {}
+
+        for outcome, count in sorted_summary.items():
+            if not outcome:
+                formatted_outcome = "empty"
+            else:
+                knot_names = []
+                for diag in outcome:
+                    pd_str = kp.to_pd_notation(diag)
+                    
+                    # Obsługa pustych diagramów lub wierzchołków wirtualnych (unknot)
+                    if not pd_str or "V[" in pd_str or pd_str == "V[0,0]":
+                        knot_names.append("0_1")
+                    else:
+                        try:
+                            # Dostosowanie składni kodu PD pod bibliotekę topoly
+                            pd_topoly = pd_str.replace("],", "];")
+                            
+                            # Obliczenie nazwy węzła za pomocą wielomianu Jonesa
+                            k_name = jones(pd_topoly)
+                            knot_names.append(str(k_name))
+                        except Exception:
+                            # W razie nieoczekiwanego błędu parsowania zachowaj surowy kod PD
+                            knot_names.append(pd_str)
+                
+                formatted_outcome = "U".join(sorted(knot_names))
+            formatted_summary[formatted_outcome] = count
+
+        print(
+            f"Group {group_idx + 1}: Diagrams {indices} -> Outcomes Summary: {formatted_summary}"
+        )
+
+        group_outcome_keys[group_idx + 1] = set(formatted_summary.keys())
+
+    if len(group_outcome_keys) > 1:
+        first_group_keys = list(group_outcome_keys.values())[0]
+        
+        all_groups_have_same_outcome_keys = all(
+            keys == first_group_keys for keys in group_outcome_keys.values()
+        )
+        
+    if all_groups_have_same_outcome_keys:
+        print("\n[!] SAME STRUCTURES (Grupy dają inne rozkłady, ale generują dokładnie ten sam zestaw splotów wynikowych!)")
+        
+    return grouped_indices, normalized_dictionaries
 
 if __name__ == "__main__":
     group_of_diagrams = [
-        "V[0,1,2],V[3,4,5],V[3,6,7],V[8,9,10],V[1,10,11],V[5,2,12],X[4,7,13,0],X[6,14,8,13],X[11,9,14,12]",
-        "V[0,1,2],V[3,4,5],V[3,6,7],V[8,9,10],V[11,2,12],V[6,13,8],X[7,14,0,4],X[14,10,12,1],X[5,11,9,13]"
+
+        "V[0,1,2],V[0,3,4],X[3,2,5,6],X[5,7,8,9],X[6,9,10,11],X[7,14,12,8],X[11,10,12,13],X[14,1,16,15],X[15,16,4,13]",
+
+        "V[0,1,2],V[3,4,5],V[0,6,7],V[8,9,4],X[1,10,11,3],X[8,11,10,7],X[12,13,6,2],X[5,9,14,15],X[15,14,13,12]"
+
         ]
 
-    resulting_groups = compare_multiple_pd_groups(group_of_diagrams, depth=1)
-    print("\nReturned Structure:", resulting_groups)
+    compare_multiple_pd_groups(group_of_diagrams, depth=1)
+
 
 

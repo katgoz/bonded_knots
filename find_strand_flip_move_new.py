@@ -12,6 +12,7 @@ import knotpy as kp
 from itertools import combinations
 from knotpy.classes.endpoint import Endpoint
 
+
 def find_path_of_type(diagram, start, end=None, allowed_type={"over"}):
     """Finds a path in a PlanarDiagram using only transitions of allowed types (over/under) inside crossings.
 
@@ -277,7 +278,7 @@ def min_crossings_path(diagram, start_endpoints, target_endpoints, blocked_trans
         last_turn = "L"
     
     if twin(ep) in target_endpoints:
-        path_states.append((twin(ep), turn))
+        path_states.append((twin(ep), last_turn))
         if ep not in start_endpoints:
             cur = parent[end_state]
         else:
@@ -1338,11 +1339,13 @@ def attach_ends(diagram, path, max_path, start_ep, free_ep, path_end1, path_end2
         insert_endpoint(diagram, node2, pos2, (node1, pos1))
 
     else:
+
         insert_endpoint(diagram, node1, pos1, (start_ep[0], start_ep[1]))
         insert_endpoint(diagram, start_ep[0], start_ep[1], (node1, pos1))
         insert_endpoint(diagram, node2, pos2, (free_ep[0], free_ep[1]))
         insert_endpoint(diagram, free_ep[0], free_ep[1], (node2, pos2))
 
+        
     if start == True:
         return (node1, pos1)
 
@@ -1373,6 +1376,75 @@ def crossing_to_arc(k, crossing, parity) -> None:
     k.remove_node(crossing, remove_incident_endpoints=False)
 
 
+def components_number(diagram):
+    """Finds the number of strand components in a PlanarDiagram.
+
+    Performs a depth-first search (DFS) over endpoints to count the total number 
+    of connected strand components. 
+
+    Traversal follows edges (via twin endpoints) and passes through nodes 
+    depending on their type:
+    - crossings: only straight-through transitions are allowed (0↔2, 1↔3).
+    - vertices: all incident endpoints are allowed.
+
+    Args:
+        diagram: PlanarDiagram object to analyze.
+
+    Returns:
+        int: The total number of independent strand components found.
+
+    Example:
+        >>> pd_text = "V[0,1,2],V[0,3,4],V[1,5,6],V[4,7,5],X[8,9,10,2],X[3,10,11,12],X[6,13,9,8],X[13,7,12,11]"
+        >>> diagram = kp.from_pd_notation(pd_text)
+        >>> print(strand_components(diagram))
+        2
+    """
+
+    visited = set()
+    components_count = 0
+
+    for ep in diagram.endpoints:
+        if ep in visited:
+            continue
+
+        components_count += 1
+        stack = [ep]
+
+        while stack:
+            curr = stack.pop()
+            if curr in visited:
+                continue
+
+            visited.add(curr)
+
+            twin = diagram.twin(curr)
+            if twin not in visited:
+                stack.append(twin)
+
+            if curr.node in diagram.crossings:
+                pos = curr.position
+                if pos == 0:
+                    nxt = diagram.endpoints[(curr.node, 2)]
+                elif pos == 2:
+                    nxt = diagram.endpoints[(curr.node, 0)]
+                elif pos == 1:
+                    nxt = diagram.endpoints[(curr.node, 3)]
+                else:
+                    nxt = diagram.endpoints[(curr.node, 1)]
+
+                if nxt not in visited:
+                    stack.append(nxt)
+
+            elif curr.node in diagram.vertices:
+                for ep2 in diagram.endpoints[curr.node]:
+                    if ep2 not in visited:
+                        stack.append(ep2)
+
+
+
+    return components_count
+
+
 #!!!! opis
 def delete_path(diagram, max_path):
     """Removes a path (strand) from a planar diagram.
@@ -1396,6 +1468,7 @@ def delete_path(diagram, max_path):
     to_remove = []
     path_end1, path_end2 = None, None
 
+
     for i in range(len(max_path) - 1):
         ep1 = max_path[i]
         ep2 = max_path[i+1]
@@ -1403,16 +1476,46 @@ def delete_path(diagram, max_path):
         if (ep1.node == ep2.node and ep1.position == (ep2.position + 2) % 4):
             to_remove.append((ep1.node, (ep1.position + 1) % 2))
 
-            if ep1.node==max_path[0].node:
-                path_end1 = diagram.twin(Endpoint(max_path[0].node, (max_path[0].position+2)%4))
 
-            if ep1.node==max_path[-1].node:
-                path_end2 = diagram.twin(Endpoint(max_path[-1].node, (max_path[-1].position+2)%4))
+    removed_nodes = {node for node, pos in to_remove}
+
+    unknot=False
+    if max_path[0].node in removed_nodes:
+        start_ep=max_path[0]
+        visited = set()
+        while start_ep.node in removed_nodes:
+            if start_ep.node in visited:
+                unknot=True
+                break
+                        #return UNKNOT #!!!!!! TODO: UNKNOT, one or 2, or infinty, how to return?
+
+            visited.add(start_ep.node)
+            start_ep = diagram.twin(Endpoint(start_ep.node, (start_ep.position+2)%4))
+
+        #if unknot == False:
+        path_end1 = start_ep     
+
+    if max_path[-1].node in removed_nodes:
+        end_ep=max_path[-1]
+        visited = set()
+        while end_ep.node in removed_nodes:
+            if end_ep.node in visited:
+                unknot=True
+                break
+                        #return UNKNOT #!!!!!! TODO: UNKNOT, one or 2, or infinty, how to return?
+
+            visited.add(end_ep.node)
+            end_ep = diagram.twin(Endpoint(end_ep.node, (end_ep.position+2)%4))
+        
+        #if unknot == False:
+        path_end2 = end_ep       
 
 
     for node, parity in to_remove:
         if node in diagram.nodes:
             crossing_to_arc(diagram, node, parity)
+
+
 
     return path_end1, path_end2
 
@@ -1441,16 +1544,24 @@ def perform_strand_flip(diagram, max_path, alternative_path, kind, outer = False
     Returns:
         new_outer (optional): list of newly inserted endpoints belonging to the outer face if `outer=True`
     """
+    start_number=components_number(diagram)
     if outer == True:
         start_ep, free_ep, new_outer = insert_path_core(diagram, alternative_path, kind, max_path, outer = True)
     else:
         start_ep, free_ep = insert_path_core(diagram, alternative_path, kind, max_path)
     path_end1, path_end2 = delete_path(diagram, max_path)
+
     if outer == True and new_outer and new_outer[0] == "S":
         ep1 = attach_ends(diagram, alternative_path, max_path, start_ep, free_ep, path_end1, path_end2, start = True)
         new_outer[0] = ep1
+    
     else:
-        attach_ends(diagram, alternative_path, max_path, start_ep, free_ep, path_end1, path_end2)        
+        attach_ends(diagram, alternative_path, max_path, start_ep, free_ep, path_end1, path_end2)
+
+    end_number=components_number(diagram)
+    while end_number<start_number:
+        kp.add_unknot(diagram)
+        end_number+=1
     if outer == True:
         return new_outer
 
@@ -1474,6 +1585,7 @@ def find_and_perform_strand_flip(diagram, outer = False):
             - True if a strand flip was performed, otherwise False
             - Outer-face information if `outer=True`, otherwise None
     """
+    
     for kind in ("over", "under"):
         result = find_strand_flip_move(diagram, kind)
         max_path, alternative_path = result

@@ -8,7 +8,7 @@ from knotpy.classes.endpoint import Endpoint
 
 pd_text = 'V(0,1,2);V(3,4,5);V(6,7,8);V(0,6,9);X(2,10,3,11);X(11,5,12,7);X(13,14,10,1);X(8,12,4,15);X(9,15,14,13)'
 #"V[0,1,2],V[0,3,4],V[5,3,6],V[7,8,9],X[10,11,12,4],X[13,14,11,10],X[1,12,7,15],X[14,13,5,8],X[6,2,15,9] "
-
+"V[0,1,2],V[0,3,4],X[3,2,5,6],X[5,7,8,9],X[6,9,10,11],X[7,14,12,8],X[11,10,12,13],X[14,1,16,15],X[15,16,4,13]"
 D = kp.from_pd_notation(pd_text)
 
 def strand_components(diagram):
@@ -719,7 +719,7 @@ def change_outer(diagram, new_outer, drag_node, knot_diagrams):
     clear_outer_endpoints(remove_endpoints, remove_endpoints)
     get_outerplanar_endpoints(diagram, drag_node, old_outer_nodes, add_endpoints)
 
-def reduce_strand_flip(diagram, knot_diagrams, dont_cover = None):
+def reduce_strand_flip(diagram, knot_diagrams, dont_cover = None, outer = True):
     """Repeatedly applies strand flip reductions until no further updates are possible.
 
     The function iteratively searches for and performs strand flip moves on the diagram
@@ -744,11 +744,17 @@ def reduce_strand_flip(diagram, knot_diagrams, dont_cover = None):
     """
     updated = True
     while updated:
-        updated, new_outer = find_and_perform_strand_flip(diagram, outer = True)
-        if updated == True:
-            if dont_cover:
-                change_outer(diagram, new_outer, dont_cover, knot_diagrams)
-        #    add_diagram_state(diagram, knot_diagrams)
+        if outer == True:
+            updated, new_outer = find_and_perform_strand_flip(diagram, outer = True)
+            if updated == True:
+                if dont_cover:
+                    change_outer(diagram, new_outer, dont_cover, knot_diagrams)
+                else:
+                    change_outer(diagram, new_outer, None, knot_diagrams)
+            #    add_diagram_state(diagram, knot_diagrams)
+        else:
+            updated, new_outer = find_and_perform_strand_flip(diagram, outer = False)
+
 
 def reduce_drag_ep(diagram, drag_node, kind, knot_diagrams, dont_cover = None):
     """Attempts to simplify the newly extracted node by searching for local strand flip moves
@@ -862,7 +868,7 @@ def diagram_to_outerplanar(D, knot_diagrams):
 
         i += 1
 
-    sanity_check_raise_exception(D)
+    #sanity_check_raise_exception(D)
     get_outerplanar_endpoints(D)
 
     return kp.canonical(D)
@@ -945,7 +951,9 @@ def expand(diagram, knot_diagrams):
             #print("red")
             reduce_drag_ep(new_diag, ep.node, kind, knot_diagrams, dont_cover=ep.node)
             #print("all")
+
             reduce_strand_flip(new_diag, knot_diagrams, dont_cover=ep.node)
+
 
             #explore_outerplanar(new_diag, visited, results, depth+1, max_depth)
             get_outerplanar_endpoints(new_diag)
@@ -1043,7 +1051,7 @@ def explore_seed_merge(seeds, results=[], knot_diagrams=[], max_depth=30):
     # BFS
     # -------------------------
     start_time = time.time()
-    TIME_LIMIT = 100
+    TIME_LIMIT = 20
 
     while frontier:
 
@@ -1054,7 +1062,7 @@ def explore_seed_merge(seeds, results=[], knot_diagrams=[], max_depth=30):
         new_frontier = []
 
         for diagram, depth, origins in frontier:
-
+            #sanity_check_raise_exception(diagram)
             canon = kp.canonical(diagram)
 
             outer_len = len([ep for ep in diagram.endpoints if ep.attr.get("outer")])
@@ -1122,6 +1130,8 @@ def explore_seed_merge(seeds, results=[], knot_diagrams=[], max_depth=30):
             if outside(diagram):
                 continue
 
+                        
+
             if depth >= max_depth:
                 continue
 
@@ -1148,15 +1158,25 @@ def explore_seed_merge(seeds, results=[], knot_diagrams=[], max_depth=30):
 if __name__ == "__main__":
     #4,5, 6
     #2,3
+
+    #V[0,1,2],V[0,3,4],V[1,5,6],V[2,7,8],X[3,9,10,11],V[4,12,5],V[6,13,7],X[8,14,15,9],X[16,12,11,10],X[16,15,14,13]
     pd_codes=[
-        "V[0,1,2],V[3,4,5],V[6,7,8],X[5,9,10,11],V[9,12,6],X[2,13,7,14],X[15,14,12,4],X[15,3,11,0],X[13,1,10,8]",
-        "V[0,1,2],V[3,4,5],V[6,7,4],V[0,8,9],X[5,7,8,2],X[1,9,6,3]"]
+        #"V[0,1,2],V[0,3,4],V[1,5,6],X[2,7,8,9],X[3,10,11,12],V[4,13,5],X[14,8,7,6],V[9,15,10],X[16,13,12,11],V[14,16,15]",
+        "V[0,1,2],V[0,3,4],V[2,5,3],V[6,7,8],X[7,9,10,11],X[12,10,9,5],X[1,13,14,15],X[15,8,11,12],X[6,14,13,4]",
+        "V[0,1,2],V[0,3,4],V[1,5,6],V[7,8,9],X[10,9,11,12],X[2,13,14,7],X[3,10,12,15],X[8,14,13,6],X[15,11,5,4]",
+        "V[0,1,2],V[0,3,4],V[1,4,5],X[3,6,7,8],X[9,10,11,2],V[6,12,13],X[10,14,12,11],X[13,15,8,7],X[5,15,14,9]",
+
+
+
+
+        #"V[0,1,2],V[0,3,4],V[1,4,5],V[2,5,3]"
+        ]
 
     results=[]
     seeds=[]
     knot_diagrams=[]
     for pd_code in pd_codes:
         seeds.append(kp.from_pd_notation(pd_code))
-    print(explore_seed_merge(seeds, results, knot_diagrams, max_depth=200))
+    print(explore_seed_merge(seeds, results, knot_diagrams, max_depth=400))
     output_path = "check_outer.pdf"
     #kp.export_pdf(knot_diagrams2, output_path)
