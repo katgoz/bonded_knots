@@ -51,7 +51,7 @@ bonded_knots/
 │   ├── 9/
 │   └── 10/
 │
-├── code/
+├── scripts/
 │   ├── __init__.py
 │   │
 │   ├── unplug.py
@@ -92,7 +92,7 @@ Each singularity number (8, 9, 10) is organized separately.
 
 ---
 
-### code/
+### scripts/
 
 This folder contains all implementation code used in the project.
 
