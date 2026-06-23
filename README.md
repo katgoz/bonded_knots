@@ -14,7 +14,7 @@ The study identifies and distinguishes knot and link types by applying diagramma
 
 The main objective of this work is to classify bonded knots with:
 
-- Singularity number ≤ 10  
+- Singularity number 8, 9, 10  
 - At most 5 crossings  
 - At least one bond  
 
@@ -39,92 +39,119 @@ The classification is performed using:
 
 ---
 
-## Data Overview (Results)
 
-Results are grouped by singularity number:
-
-- 8 singularities
-- 9 singularities
-- 10 singularities
-
-Each group is divided into:
-
-- prime
-- prime_sum
-- 2_comp
-- 2_comp_sum
-
-Additionally, datasets are split into:
-
-- merged (a single representative from each Yamada equivalence class identified after simplification)
-- non-merged (diagrams that were not identified as equivalent within Yamada groups after simplification)
-
-All results are stored in Excel files containing:
-
-- Yamada polynomial values
-- PD-code representations
-- Classification labels
-
----
 
 ## Project Structure
 
 ```
-results/
-├── 8/
-│   ├── 2_comp/
-│   ├── 2_comp_sum/
-│   ├── prime/
-│   └── prime_sum/
+bonded_knots/
 │
-├── 9/
-│   ├── 2_comp/
-│   ├── 2_comp_sum/
-│   ├── prime/
-│   └── prime_sum/
+├── classification/
+│   ├── 8/
+│   ├── 9/
+│   └── 10/
 │
-└── 10/
-    ├── 2_comp/
-    ├── 2_comp_sum/
-    ├── prime/
-    └── prime_sum/
-
-code/
-├── find_strand_flip_move_new.py
-├── outer_nodes.py
-└── unplug.py
-
-knots.pdf
-README.md
+├── code/
+│   ├── __init__.py
+│   │
+│   ├── unplug.py
+│   │
+│   ├── automated_simplification/
+│   │   ├── __init__.py
+│   │   ├── find_strand_flip_move.py
+│   │   └── outer_nodes.py
+│   │
+│   └── data_handling/
+│
+├── data_pipeline/
+│   ├── 01_automated_simplification/
+│   ├── 02_unplugging/
+│   ├── 03_final_merged/
+│   └── 04_no_mirrors/
+│
+├── classification_of_bonded_knots.pdf
+└── README.md
 ```
 
 ---
 
-## Code Description
 
-### find_strand_flip_move_new.py
-Implements strand flip operations used in knot transformations and equivalence checking.
 
-### outer_nodes.py
-Main script for automated simplification of knot diagrams by moving vertices outward.
+### classification/
 
-### unplug.py
-Implements the unplugging operation used as an invariant for bonded knot structures.
+This folder contains the **main results of the classification**.
+
+It includes:
+- Excel files with:
+  - Yamada polynomial values
+  - PD-code representations
+  - representative knot/link diagrams (selected after simplification)
+- PDF files containing **visualizations of the corresponding knot diagrams**
+
+Each singularity number (8, 9, 10) is organized separately.
 
 ---
 
-## knots.pdf
+### code/
 
-This document contains a detailed description of the theoretical background, computational methods, and implementation details used in the project. 
+This folder contains all implementation code used in the project.
 
-The PDF documents the full pipeline of the classification process, including:
-- generation of bonded knot diagrams,
-- the use of Yamada polynomial,
-   automated simplification procedures.
+The most important part of the pipeline is located in:
 
-It also provides an overview of the Python implementation and describes how each script contributes to the overall classification workflow.
+* **`automated_simplification/`** — Core algorithms for diagram simplification and equivalence detection.
+  * **`find_strand_flip_move.py`** — Implements strand flip operations used in knot transformations and equivalence checking.
+  * **`outer_nodes.py`** — Main script for automated simplification of knot diagrams by moving vertices outward.
+
+* **`unplug.py`** — Implementation of the unplugging operation used as a structural invariant.
+
+* **`data_handling/`** — Auxiliary scripts for data processing (Excel handling, renaming, mirror elimination, plotting, exporting diagrams).
+---
+
+### data_pipeline/
+
+This folder contains the results from each step of the computational pipeline used to generate the final classification.
+
+* **`01_automated_simplification/`** — Initial classification after automated simplification.
+  * Each of the groups is divided into structural categories:
+    * `prime`
+    * `prime_sum`
+    * `2_comp`
+    * `2_comp_sum`
+  * Results are then further split into two main groups:
+    * **`merged`** — A single representative from each Yamada equivalence class identified after simplification.
+    * **`not_merged`** — Diagrams that were not identified as equivalent within Yamada groups (non-equivalent or unresolved).
+
+  * All results are stored in Excel files containing: **Yamada polynomial values**, **PD-code representations**, and **Classification labels**.
+
+* **`02_unplugging/`** — Contains cases where the unplugging operation produced identical results for different diagrams.
+  * These cases required **manual verification**.
+  * Includes Excel files and PDF documents with manual analysis.
+
+* **`03_final_merged/`** — Complete, unified dataset after incorporating unplugging corrections, before mirror reduction.
+
+* **`04_no_mirrors/`** — Final step where mirror duplicates were removed. At this stage, files are still divided into the four structural categories (`prime`, `prime_sum`, `2_comp`, `2_comp_sum`).
+
+> **Note:** Across all pipeline stages, diagram indexing was independent. All results are merged into a single, consistent global indexing system only in the final `classification/` stage.
+
+---
+
+### classification_of_bonded_knots.pdf
+
+This document contains the theoretical background and full description of the computational framework used in the project, including:
+
+- generation of bonded knot diagrams  
+- computation of the Yamada polynomial  
+- automated simplification procedures  
+- implementation details of the Python pipeline  
+
+It serves as a complete reference for the methodology and implementation.
+
+
+---
 
 
 ## Reference
 
-This work is based on a thesis on computational classification of bonded knots.
+This work is based on the following thesis:
+* **Katarzyna Gozdek**, *Mathematical classification of bonded
+links and its application to proteins*, University of Warsaw, 2026.
