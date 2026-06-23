@@ -117,7 +117,7 @@ This folder contains the results from each step of the computational pipeline us
     * `prime_sum`
     * `2_comp`
     * `2_comp_sum`
-  * Results are then further split into two main groups:
+  * Results are then further split into two groups:
     * **`merged`** — A single representative from each Yamada equivalence class identified after simplification.
     * **`not_merged`** — Diagrams that were not identified as equivalent within Yamada groups (non-equivalent or unresolved).
 
